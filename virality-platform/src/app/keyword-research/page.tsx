@@ -4,9 +4,12 @@ import { useState, useMemo } from "react";
 import {
   Search, Users, Play, Youtube, Loader2, BarChart2, BookOpen,
   Download, Instagram, Heart, X, CheckCircle, ExternalLink,
+  AlertTriangle, TrendingUp, Flame, Target, MessageCircle, Repeat, EyeOff, Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { VERDICT_LABEL, type ViralityMetrics, type ViralityVerdict } from "@/lib/virality";
+import type { ViralAnalysis, FrameworkScore } from "@/lib/analysis-prompt";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 function fmt(n: number) {
@@ -42,22 +45,94 @@ interface Video {
   id: string; title: string; channelTitle: string; channelId: string;
   thumbnail: string; views: number; likes: number; comments: number;
   publishedAt: string; duration: string; url: string;
+  channelSubscribers?: number; channelAvgViews?: number;
+  metrics?: ViralityMetrics;
 }
 interface Channel {
   id: string; title: string; thumbnail: string; subscribers: number;
   videoCount: number; viewCount: number; description: string; url: string;
+  likelyAdDriven?: boolean; avgViewsPerVideo?: number;
 }
 interface IGReel {
   id: string; url: string; thumbnail: string; caption: string;
   ownerUsername: string; ownerProfilePic: string;
   plays: number; likes: number; comments: number; timestamp: string;
+  metrics?: ViralityMetrics | null;
 }
 interface TranscriptData {
   transcript: string;
-  analysis: {
-    hook: string; format: string; whyViral: string; keyTopics: string[];
-    contentFormat: string; hookType: string; cta: string;
-  };
+  analysis: ViralAnalysis;
+}
+type SortKey = "virality" | "engagement" | "outlier" | "views";
+
+// ── Ranking helpers ───────────────────────────────────────────────────
+function sortValue(m: ViralityMetrics | null | undefined, views: number, key: SortKey): number {
+  if (key === "views") return views;
+  if (!m) return -1; // unknown metrics sink to the bottom
+  if (key === "engagement") return m.engagementRate;
+  if (key === "outlier") return m.outlierScore ?? -1;
+  return m.viralityScore;
+}
+function rankItems<T>(items: T[], get: (t: T) => { m: ViralityMetrics | null | undefined; views: number }, key: SortKey, hideAds: boolean) {
+  const visible = hideAds ? items.filter(t => !get(t).m?.likelyPaid) : items;
+  const hidden = items.length - visible.length;
+  const sorted = [...visible].sort((a, b) => {
+    const A = get(a), B = get(b);
+    return sortValue(B.m, B.views, key) - sortValue(A.m, A.views, key) || B.views - A.views;
+  });
+  return { sorted, hidden };
+}
+
+// ── Metric badges ─────────────────────────────────────────────────────
+const VERDICT_STYLE: Record<ViralityVerdict, string> = {
+  "organic-viral": "bg-green-500/15 text-green-400 border-green-500/30",
+  strong: "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  average: "bg-white/[0.05] text-muted-foreground border-white/[0.1]",
+  "likely-paid": "bg-red-500/15 text-red-400 border-red-500/30",
+};
+function engagementColor(rate: number) {
+  if (rate >= 4) return "text-green-400";
+  if (rate >= 1.5) return "text-blue-400";
+  if (rate >= 0.3) return "text-yellow-400";
+  return "text-red-400";
+}
+function MetricBadges({ m }: { m?: ViralityMetrics | null }) {
+  if (!m) return <span className="text-[10px] text-muted-foreground/60">Engagement unknown (no view count)</span>;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className={`inline-flex items-center gap-1 text-[10px] font-semibold border rounded-full px-2 py-0.5 ${VERDICT_STYLE[m.verdict]}`}
+        title={m.paidReason || `Virality score ${m.viralityScore}/100`}>
+        {m.verdict === "likely-paid" ? <AlertTriangle className="h-2.5 w-2.5" /> : <Flame className="h-2.5 w-2.5" />}
+        {VERDICT_LABEL[m.verdict]} · {m.viralityScore}
+      </span>
+      <span className={`text-[10px] font-semibold ${engagementColor(m.engagementRate)}`} title="(likes + comments) ÷ views">
+        {m.engagementRate}% engagement
+      </span>
+      {m.outlierScore !== null && (
+        <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold ${m.outlierScore >= 5 ? "text-orange-400" : "text-muted-foreground"}`}
+          title="Views ÷ the channel's average views per video">
+          <TrendingUp className="h-2.5 w-2.5" /> {m.outlierScore}× channel avg
+        </span>
+      )}
+    </div>
+  );
+}
+function ScoreBar({ label, s }: { label: string; s?: FrameworkScore }) {
+  if (!s) return null;
+  const score = Math.max(0, Math.min(10, Number(s.score) || 0));
+  const color = score >= 8 ? "bg-green-500" : score >= 5 ? "bg-yellow-500" : "bg-red-500";
+  return (
+    <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.05] space-y-1.5">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{label}</p>
+        <p className="text-xs font-bold">{score}/10</p>
+      </div>
+      <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+        <div className={`h-full ${color}`} style={{ width: `${score * 10}%` }} />
+      </div>
+      {s.note && <p className="text-[11px] text-muted-foreground leading-snug">{s.note}</p>}
+    </div>
+  );
 }
 
 // ── In-app video modal ────────────────────────────────────────────────
@@ -120,6 +195,36 @@ function AnalysisPanel({ data, onDownload }: { data: TranscriptData; onDownload:
           </div>
         ))}
       </div>
+      {data.analysis.reachAssessment && (
+        <div className={`rounded-xl p-3 border text-xs flex items-start gap-2 ${
+          data.analysis.reachAssessment === "likely paid"
+            ? "bg-red-500/10 border-red-500/30 text-red-600 dark:text-red-300"
+            : data.analysis.reachAssessment === "organic"
+              ? "bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-300"
+              : "bg-white/[0.03] border-white/[0.08] text-muted-foreground"
+        }`}>
+          {data.analysis.reachAssessment === "likely paid" ? <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" /> : <CheckCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />}
+          <span><b className="uppercase tracking-wider text-[10px]">Reach: {data.analysis.reachAssessment}</b>{data.analysis.reachReason ? ` — ${data.analysis.reachReason}` : ""}</span>
+        </div>
+      )}
+      {data.analysis.targetAvatar && (
+        <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-4">
+          <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5"><Target className="h-3 w-3" /> TARGET AVATAR</p>
+          <p className="text-sm leading-relaxed">{data.analysis.targetAvatar}</p>
+        </div>
+      )}
+      {(data.analysis.hookStrength || data.analysis.engagementRules) && (
+        <div className="space-y-2">
+          <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">SCORECARD · HOOK + 4 ENGAGEMENT RULES</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            <ScoreBar label="Hook strength" s={data.analysis.hookStrength} />
+            <ScoreBar label="1 · Relevance" s={data.analysis.engagementRules?.relevance} />
+            <ScoreBar label="2 · Non-obvious" s={data.analysis.engagementRules?.nonObvious} />
+            <ScoreBar label="3 · Easy to absorb" s={data.analysis.engagementRules?.absorption} />
+            <ScoreBar label="4 · Short distance" s={data.analysis.engagementRules?.shortDistance} />
+          </div>
+        </div>
+      )}
       <div className="space-y-2">
         <div className="bg-orange-500/5 border border-orange-500/20 rounded-xl p-4">
           <p className="text-[10px] text-orange-400 font-semibold uppercase tracking-wider mb-2">🎣 HOOK</p>
@@ -133,6 +238,30 @@ function AnalysisPanel({ data, onDownload }: { data: TranscriptData; onDownload:
           <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-4">
             <p className="text-[10px] text-purple-400 font-semibold uppercase tracking-wider mb-2">📐 CONTENT BREAKDOWN</p>
             <p className="text-sm leading-relaxed">{data.analysis.contentFormat}</p>
+          </div>
+        )}
+        {!!data.analysis.commentTriggers?.length && (
+          <div className="bg-pink-500/5 border border-pink-500/20 rounded-xl p-4">
+            <p className="text-[10px] text-pink-400 font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5"><MessageCircle className="h-3 w-3" /> COMMENT TRIGGERS</p>
+            <ul className="text-sm leading-relaxed list-disc pl-4 space-y-1">
+              {data.analysis.commentTriggers.map((t, i) => <li key={i}>{t}</li>)}
+            </ul>
+          </div>
+        )}
+        {!!data.analysis.retentionTactics?.length && (
+          <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
+            <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-2">⏱️ RETENTION TACTICS</p>
+            <ul className="text-sm leading-relaxed list-disc pl-4 space-y-1">
+              {data.analysis.retentionTactics.map((t, i) => <li key={i}>{t}</li>)}
+            </ul>
+          </div>
+        )}
+        {!!data.analysis.replicate?.length && (
+          <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-4">
+            <p className="text-[10px] text-green-400 font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5"><Repeat className="h-3 w-3" /> HOW TO REPLICATE</p>
+            <ol className="text-sm leading-relaxed list-decimal pl-4 space-y-1">
+              {data.analysis.replicate.map((t, i) => <li key={i}>{t}</li>)}
+            </ol>
           </div>
         )}
         {data.analysis.keyTopics?.length > 0 && (
@@ -212,7 +341,10 @@ function useWatchlist() {
 export default function KeywordResearchPage() {
   const [keyword, setKeyword] = useState("");
   const [platform, setPlatform] = useState<"both" | "youtube" | "instagram">("both");
-  const [period, setPeriod] = useState("all");
+  // Default to recent content — older "all time" hits reflect old trends
+  const [period, setPeriod] = useState("6mo");
+  const [sortBy, setSortBy] = useState<SortKey>("virality");
+  const [hideAds, setHideAds] = useState(true);
   const [ytMax, setYtMax] = useState(20);
   const [loading, setLoading] = useState(false);
   const [igLoading, setIgLoading] = useState(false);
@@ -258,6 +390,17 @@ export default function KeywordResearchPage() {
     return Object.values(map).sort((a, b) => (b.totalPlays || b.totalLikes) - (a.totalPlays || a.totalLikes)).slice(0, 8);
   }, [igReels]);
 
+  const ytRanked = useMemo(
+    () => rankItems(videos, v => ({ m: v.metrics, views: v.views }), sortBy, hideAds),
+    [videos, sortBy, hideAds]
+  );
+  const shownVideos = ytRanked.sorted.slice(0, ytMax);
+  const igRanked = useMemo(
+    () => rankItems(igReels, r => ({ m: r.metrics, views: r.plays }), sortBy === "outlier" ? "engagement" : sortBy, hideAds),
+    [igReels, sortBy, hideAds]
+  );
+  const shownReels = igRanked.sorted.slice(0, 20);
+
   const search = async () => {
     if (!keyword.trim()) return;
     setLoading(true);
@@ -298,6 +441,7 @@ export default function KeywordResearchPage() {
             likes: v.likes || 0,
             comments: v.comments || 0,
             timestamp: v.timestamp || "",
+            metrics: v.metrics ?? null,
           })));
         })
         .catch(e => setIgError(String(e)))
@@ -316,7 +460,10 @@ export default function KeywordResearchPage() {
     try {
       const res = await fetch("/api/transcript", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: video.url, title: video.title }),
+        body: JSON.stringify({
+          url: video.url, title: video.title, channelTitle: video.channelTitle,
+          views: video.views, likes: video.likes, comments: video.comments, metrics: video.metrics ?? null,
+        }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -335,7 +482,7 @@ export default function KeywordResearchPage() {
     try {
       const res = await fetch("/api/ig-analyze", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: reel.url, caption: reel.caption, plays: reel.plays, likes: reel.likes, comments: reel.comments, username: reel.ownerUsername }),
+        body: JSON.stringify({ url: reel.url, caption: reel.caption, plays: reel.plays, likes: reel.likes, comments: reel.comments, username: reel.ownerUsername, metrics: reel.metrics ?? null }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -347,21 +494,32 @@ export default function KeywordResearchPage() {
 
   const downloadCSV = () => {
     const esc = (s: unknown) => `"${String(s ?? "").replace(/"/g, '""').replace(/\n|\r/g, " ")}"`;
-    const cols = ["platform","url","title_or_caption","creator","views_or_plays","likes","comments","date","hook_type","format","why_viral","hook","cta","key_topics","transcript"];
-    const ytRows = videos.map(v => {
-      const td = transcriptData[v.id];
-      return ["YouTube Short", v.url, v.title, v.channelTitle, v.views, v.likes, v.comments, v.publishedAt,
-        td?.analysis?.hookType||"", td?.analysis?.format||"", td?.analysis?.whyViral||"",
-        td?.analysis?.hook||"", td?.analysis?.cta||"", td?.analysis?.keyTopics?.join("; ")||"", td?.transcript||"",
-      ].map(esc).join(",");
-    });
-    const igRows = igReels.map(r => {
-      const td = igAnalysisData[r.id];
-      return ["Instagram Reel", r.url, r.caption, r.ownerUsername, r.plays||r.likes, r.likes, r.comments, r.timestamp,
-        td?.analysis?.hookType||"", td?.analysis?.format||"", td?.analysis?.whyViral||"",
-        td?.analysis?.hook||"", td?.analysis?.cta||"", td?.analysis?.keyTopics?.join("; ")||"", td?.transcript||"",
-      ].map(esc).join(",");
-    });
+    const cols = ["platform","url","title_or_caption","creator","views_or_plays","likes","comments","date",
+      "engagement_rate_pct","outlier_x_channel_avg","virality_score","verdict","likely_paid","paid_reason",
+      "hook_type","format","target_avatar","hook_strength","relevance","non_obvious","absorption","short_distance",
+      "why_viral","hook","cta","key_topics","comment_triggers","replicate","transcript"];
+    const metricCols = (m?: ViralityMetrics | null) => [
+      m?.engagementRate ?? "", m?.outlierScore ?? "", m?.viralityScore ?? "", m ? VERDICT_LABEL[m.verdict] : "",
+      m ? (m.likelyPaid ? "yes" : "no") : "", m?.paidReason ?? "",
+    ];
+    const analysisCols = (td?: TranscriptData) => {
+      const a = td?.analysis;
+      return [
+        a?.hookType||"", a?.format||"", a?.targetAvatar||"", a?.hookStrength?.score ?? "",
+        a?.engagementRules?.relevance?.score ?? "", a?.engagementRules?.nonObvious?.score ?? "",
+        a?.engagementRules?.absorption?.score ?? "", a?.engagementRules?.shortDistance?.score ?? "",
+        a?.whyViral||"", a?.hook||"", a?.cta||"", a?.keyTopics?.join("; ")||"",
+        a?.commentTriggers?.join("; ")||"", a?.replicate?.join(" | ")||"", td?.transcript||"",
+      ];
+    };
+    const ytRows = shownVideos.map(v => [
+      "YouTube Short", v.url, v.title, v.channelTitle, v.views, v.likes, v.comments, v.publishedAt,
+      ...metricCols(v.metrics), ...analysisCols(transcriptData[v.id]),
+    ].map(esc).join(","));
+    const igRows = shownReels.map(r => [
+      "Instagram Reel", r.url, r.caption, r.ownerUsername, r.plays||"", r.likes, r.comments, r.timestamp,
+      ...metricCols(r.metrics), ...analysisCols(igAnalysisData[r.id]),
+    ].map(esc).join(","));
     const csv = [cols.map(c => `"${c}"`).join(","), ...ytRows, ...igRows].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -374,6 +532,7 @@ export default function KeywordResearchPage() {
 
   const igTag = keyword.trim().split(/\s+/)[0].toLowerCase();
   const periodLabel: Record<string, string> = { "14d": "14 days", "30d": "1 month", "6mo": "6 months", "1y": "1 year", "2y": "2 years", "all": "all time" };
+  const sortLabel: Record<SortKey, string> = { virality: "Ranked by virality score", engagement: "Ranked by engagement rate", outlier: "Ranked by outlier score", views: "Ranked by most views" };
   const hasResults = videos.length > 0 || igReels.length > 0;
   const showYT = platform === "both" || platform === "youtube";
   const showIG = platform === "both" || platform === "instagram";
@@ -390,7 +549,7 @@ export default function KeywordResearchPage() {
             Keyword Research
           </h1>
 
-          <p className="mt-1 text-sm text-muted-foreground">Find top-performing Shorts and Reels sorted by most views</p>
+          <p className="mt-1 text-sm text-muted-foreground">Find genuinely viral Shorts and Reels — ranked by engagement, with paid ads filtered out</p>
         </div>
         {hasResults && (
           <Button variant="ghost" size="sm" onClick={downloadCSV} className="rounded-xl glass border-white/[0.08] gap-1.5 text-xs h-9">
@@ -494,8 +653,46 @@ export default function KeywordResearchPage() {
             </>
           )}
 
+        </div>
+
+        {/* Ranking + ad filter */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-muted-foreground">Rank by:</span>
+            {([
+              ["virality", "Virality score"],
+              ["engagement", "Engagement rate"],
+              ["outlier", "Outlier (vs channel avg)"],
+              ["views", "Most views"],
+            ] as const).map(([val, lbl]) => (
+              <button
+                key={val}
+                onClick={() => setSortBy(val)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-all border ${
+                  sortBy === val
+                    ? "bg-gradient-to-r from-red-500 to-orange-500 border-transparent text-white"
+                    : "glass border-white/[0.08] text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {lbl}
+              </button>
+            ))}
+          </div>
+          <div className="h-4 w-px bg-white/[0.08]" />
+          <button
+            onClick={() => setHideAds(v => !v)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all border ${
+              hideAds ? "bg-green-500/15 border-green-500/30 text-green-400" : "glass border-white/[0.08] text-muted-foreground hover:text-foreground"
+            }`}
+            title="Hide videos whose views look like paid ad impressions (very low likes per view)"
+          >
+            {hideAds ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+            {hideAds ? "Hiding likely ads" : "Showing likely ads"}
+          </button>
           {searched && (
-            <span className="ml-auto text-xs text-muted-foreground">Most views · {periodLabel[period]}</span>
+            <span className="ml-auto text-xs text-muted-foreground">
+              {sortLabel[sortBy]} · {periodLabel[period]}
+            </span>
           )}
         </div>
       </div>
@@ -529,8 +726,8 @@ export default function KeywordResearchPage() {
                 icon={<Youtube className="h-5 w-5 text-white" />}
                 accent="bg-gradient-to-br from-red-500 to-orange-500"
                 title="Top YouTube Shorts"
-                label={`Most viewed Shorts for "${keyword}" · sorted by views`}
-                count={videos.length}
+                label={`Shorts for "${keyword}" · ${sortLabel[sortBy].toLowerCase()}${hideAds && ytRanked.hidden ? ` · ${ytRanked.hidden} likely ad${ytRanked.hidden === 1 ? "" : "s"} hidden` : ""}`}
+                count={shownVideos.length}
                 loading={loading}
               />
 
@@ -543,13 +740,15 @@ export default function KeywordResearchPage() {
                       <p className="text-sm text-muted-foreground">Fetching YouTube Shorts…</p>
                     </div>
                   )}
-                  {!loading && videos.length === 0 && (
+                  {!loading && shownVideos.length === 0 && (
                     <div className="glass rounded-2xl p-10 text-center">
                       <Youtube className="mx-auto h-8 w-8 text-muted-foreground/20 mb-3" />
-                      <p className="text-sm text-muted-foreground">No Shorts found for this keyword.</p>
+                      <p className="text-sm text-muted-foreground">
+                        {videos.length > 0 ? "All results look like paid ads. Toggle \"Showing likely ads\" to see them." : "No Shorts found for this keyword."}
+                      </p>
                     </div>
                   )}
-                  {videos.map((video, i) => (
+                  {shownVideos.map((video, i) => (
                     <div key={video.id} className="group">
                       <div className="glass rounded-2xl overflow-hidden hover:border-white/[0.12] transition-all duration-300">
                         <div className="flex gap-2 sm:gap-4 p-3 sm:p-4">
@@ -577,6 +776,10 @@ export default function KeywordResearchPage() {
                               <span className="text-xs text-muted-foreground">👍 {fmt(video.likes)}</span>
                               <span className="text-xs text-muted-foreground">💬 {fmt(video.comments)}</span>
                             </div>
+                            <MetricBadges m={video.metrics} />
+                            {video.metrics?.likelyPaid && video.metrics.paidReason && (
+                              <p className="text-[10px] text-red-400/80">{video.metrics.paidReason}</p>
+                            )}
                           </div>
                           <div className="shrink-0 flex items-center">
                             <Button
@@ -634,13 +837,19 @@ export default function KeywordResearchPage() {
                           <div className="flex-1 min-w-0">
                             <a href={ch.url} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold hover:text-red-400 transition-colors truncate block">{ch.title}</a>
                             <p className="text-[11px] text-muted-foreground truncate">{ch.description}</p>
+                            {ch.likelyAdDriven && (
+                              <span className="mt-1 inline-flex items-center gap-1 text-[9px] font-semibold text-red-400 bg-red-500/10 border border-red-500/20 rounded-full px-1.5 py-0.5"
+                                title="Total views are over 1000× subscribers — reach is likely bought with ads">
+                                <AlertTriangle className="h-2.5 w-2.5" /> Likely ad-driven
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div className="mt-3 grid grid-cols-3 gap-1.5">
                           {[
                             { icon: <Users className="h-2.5 w-2.5 text-blue-400" />, val: fmt(ch.subscribers), label: "Subs" },
                             { icon: <Play className="h-2.5 w-2.5 text-red-400" />, val: fmt(ch.videoCount), label: "Videos" },
-                            { icon: <BarChart2 className="h-2.5 w-2.5 text-green-400" />, val: fmt(ch.viewCount), label: "Views" },
+                            { icon: <BarChart2 className="h-2.5 w-2.5 text-green-400" />, val: fmt(ch.avgViewsPerVideo ?? (ch.videoCount ? Math.round(ch.viewCount / ch.videoCount) : 0)), label: "Avg / video" },
                           ].map(({ icon, val, label }) => (
                             <div key={label} className="bg-black/20 border border-white/[0.04] rounded-lg p-2 text-center">
                               <div className="flex justify-center mb-0.5">{icon}</div>
@@ -680,8 +889,8 @@ export default function KeywordResearchPage() {
                 icon={<Instagram className="h-5 w-5 text-white" />}
                 accent="bg-gradient-to-br from-pink-500 to-purple-600"
                 title="Top Instagram Reels"
-                label={`Top Reels for #${igTag} · sorted by views · est. views shown when unavailable`}
-                count={igReels.length}
+                label={`Reels for #${igTag} · ${(sortBy === "outlier" ? sortLabel.engagement : sortLabel[sortBy]).toLowerCase()}${hideAds && igRanked.hidden ? ` · ${igRanked.hidden} likely ad${igRanked.hidden === 1 ? "" : "s"} hidden` : ""}`}
+                count={shownReels.length}
                 loading={igLoading}
               />
 
@@ -701,7 +910,7 @@ export default function KeywordResearchPage() {
                       <p className="text-xs text-muted-foreground font-mono break-all">{igError}</p>
                     </div>
                   )}
-                  {!igLoading && !igError && igReels.length === 0 && (
+                  {!igLoading && !igError && shownReels.length === 0 && (
                     <div className="glass rounded-2xl p-10 text-center">
                       <Instagram className="mx-auto h-8 w-8 text-muted-foreground/20 mb-3" />
                       <p className="text-sm text-muted-foreground">
@@ -709,7 +918,7 @@ export default function KeywordResearchPage() {
                       </p>
                     </div>
                   )}
-                  {igReels.map((reel, i) => (
+                  {shownReels.map((reel, i) => (
                     <div key={reel.id} className="group">
                       <div className="glass rounded-2xl overflow-hidden hover:border-white/[0.12] transition-all duration-300">
                         <div className="flex gap-2 sm:gap-4 p-3 sm:p-4">
@@ -759,6 +968,7 @@ export default function KeywordResearchPage() {
                               <span className="text-xs text-muted-foreground">❤️ {fmt(reel.likes)}</span>
                               <span className="text-xs text-muted-foreground">💬 {fmt(reel.comments)}</span>
                             </div>
+                            <MetricBadges m={reel.metrics} />
                           </div>
                           <div className="shrink-0 flex items-center">
                             <Button

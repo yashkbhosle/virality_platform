@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { buildViralAnalysisPrompt, parseViralAnalysis } from "@/lib/analysis-prompt";
+import type { ViralityMetrics } from "@/lib/virality";
 
 export const maxDuration = 120;
 
@@ -25,24 +27,23 @@ function extractYouTubeId(url: string): string | null {
   return null;
 }
 
-async function analyzeVideoWithGemini(youtubeUrl: string, title: string) {
+async function analyzeVideoWithGemini(
+  youtubeUrl: string,
+  ctx: { title: string; creator: string; views: number; likes: number; comments: number; metrics: ViralityMetrics | null }
+) {
   const key = getKey();
 
-  const prompt = `You are an expert viral content analyst. Watch this YouTube Short and provide a detailed analysis.
-
-Title: "${title}"
-
-Return ONLY valid JSON with no markdown fences, no extra text:
-{
-  "transcript": "Complete word-for-word transcript of everything spoken in the video",
-  "hook": "The exact opening hook — what is said or shown in the first 3-5 seconds",
-  "format": "Content format (e.g. Tutorial, Storytime, List, Case Study, Before/After, POV, Tips, etc.)",
-  "whyViral": "3-4 sentences explaining why this video performs well — specific reasons",
-  "keyTopics": ["topic1", "topic2", "topic3", "topic4", "topic5"],
-  "contentFormat": "Structure breakdown: what happens in the intro → middle → end",
-  "hookType": "Hook category (e.g. Shock, Question, Controversy, Bold Promise, Story, Statistics, Visual)",
-  "cta": "Call to action at the end, or 'None detected'"
-}`;
+  const prompt = buildViralAnalysisPrompt({
+    platform: "YouTube Short",
+    title: ctx.title,
+    creator: ctx.creator,
+    views: ctx.views,
+    likes: ctx.likes,
+    comments: ctx.comments,
+    metrics: ctx.metrics,
+    hasVideo: true,
+    includeTranscript: true,
+  });
 
   const res = await fetch(`${GEMINI_URL}?key=${key}`, {
     method: "POST",
@@ -56,6 +57,7 @@ Return ONLY valid JSON with no markdown fences, no extra text:
           ],
         },
       ],
+      generationConfig: { responseMimeType: "application/json" },
     }),
   });
 
@@ -66,25 +68,11 @@ Return ONLY valid JSON with no markdown fences, no extra text:
 
   const data = await res.json();
   const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-
-  try {
-    return JSON.parse(raw.replace(/```json|```/g, "").trim());
-  } catch {
-    return {
-      transcript: "",
-      hook: "Could not parse",
-      format: "Unknown",
-      whyViral: raw,
-      keyTopics: [] as string[],
-      contentFormat: "",
-      hookType: "Unknown",
-      cta: "Unknown",
-    };
-  }
+  return parseViralAnalysis(raw);
 }
 
 export async function POST(req: NextRequest) {
-  const { url, title } = await req.json();
+  const { url, title, channelTitle, views = 0, likes = 0, comments = 0, metrics = null } = await req.json();
 
   try {
     const videoId = extractYouTubeId(url);
@@ -92,7 +80,14 @@ export async function POST(req: NextRequest) {
 
     // Gemini accepts both watch and shorts URLs directly
     const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    const result = await analyzeVideoWithGemini(watchUrl, title || "");
+    const result = await analyzeVideoWithGemini(watchUrl, {
+      title: title || "",
+      creator: channelTitle || "",
+      views: Number(views) || 0,
+      likes: Number(likes) || 0,
+      comments: Number(comments) || 0,
+      metrics,
+    });
 
     const { transcript = "", ...analysis } = result;
     return NextResponse.json({ transcript, analysis });

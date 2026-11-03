@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { computeViralityMetrics } from "@/lib/virality";
+
+const PERIOD_DAYS: Record<string, number> = { "14d": 14, "30d": 30, "6mo": 180, "1y": 365, "2y": 730 };
 
 export const maxDuration = 300;
 
@@ -31,24 +34,36 @@ export async function GET(req: NextRequest) {
 
     const data = await res.json() as any[];
 
+    // Period filter — previously the selected period was ignored for Instagram
+    const days = PERIOD_DAYS[period];
+    const cutoff = days ? Date.now() - days * 86400000 : 0;
+
     const videos = data
       .filter((item) => item.videoUrl)
-      .sort((a, b) => (b.videoPlayCount || 0) - (a.videoPlayCount || 0))
-      .slice(0, 20)
-      .map((item) => ({
-        url: item.url,
-        videoUrl: item.videoUrl,
-        thumbnail: item.displayUrl,
-        creator: item.ownerUsername,
-        views: item.videoPlayCount,
-        likes: item.likesCount || 0,
-        comments: item.commentsCount || 0,
-        caption: item.caption || "",
-        timestamp: item.timestamp,
-      }));
+      .filter((item) => !cutoff || (item.timestamp && new Date(item.timestamp).getTime() >= cutoff))
+      .map((item) => {
+        const views = item.videoPlayCount || 0;
+        const likes = item.likesCount || 0;
+        const comments = item.commentsCount || 0;
+        return {
+          url: item.url,
+          videoUrl: item.videoUrl,
+          thumbnail: item.displayUrl,
+          creator: item.ownerUsername,
+          views,
+          likes,
+          comments,
+          caption: item.caption || "",
+          timestamp: item.timestamp,
+          // Engagement metrics only make sense when the real play count is known
+          metrics: views > 0 ? computeViralityMetrics({ views, likes, comments }) : null,
+        };
+      })
+      .sort((a, b) => (b.views || 0) - (a.views || 0))
+      .slice(0, 40);
 
     if (videos.length === 0) {
-      return NextResponse.json({ videos: [], message: "No viral videos found for this keyword. Try a broader keyword." });
+      return NextResponse.json({ videos: [], message: "No Reels found for this hashtag in the selected period. Try a longer period or a broader keyword." });
     }
 
     console.log(`[instagram] q=${q} period=${period} → ${videos.length} results`);
