@@ -20,6 +20,13 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Storage (personas, saved hooks, scripts, tracking)
+
+New features persist data through `src/lib/store.ts`:
+
+- **Production (Vercel):** set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, then run [`supabase/schema.sql`](supabase/schema.sql) once in the Supabase SQL editor. The service role key is only used server-side.
+- **Local:** with no Supabase env vars, data is written to `../data/<collection>.json`. This does not persist on Vercel.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
