@@ -2,8 +2,7 @@
 // Uses responseMimeType=application/json, retries once on 5xx/429,
 // and salvages the first {...} block if strict parsing fails.
 
-const GEMINI_GENERATE_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+import { GEMINI_GENERATE_URL } from "@/lib/gemini-model";
 
 export class GeminiJSONError extends Error {
   constructor(message: string, public status?: number) {

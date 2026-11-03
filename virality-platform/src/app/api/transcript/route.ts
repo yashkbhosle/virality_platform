@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { GEMINI_GENERATE_URL } from "@/lib/gemini-model";
 import { buildViralAnalysisPrompt, parseViralAnalysis } from "@/lib/analysis-prompt";
 import type { ViralityMetrics } from "@/lib/virality";
 
 export const maxDuration = 120;
 
-const GEMINI_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+const GEMINI_URL = GEMINI_GENERATE_URL;
 
 function getKey(): string {
   const key = process.env.GEMINI_API_KEY;

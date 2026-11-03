@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { GEMINI_GENERATE_URL } from "@/lib/gemini-model";
 import { getChannelTopVideos } from "@/lib/youtube";
 
-const GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+
 
 function getKey() {
   const k = process.env.GEMINI_API_KEY;
