@@ -59,3 +59,33 @@ export interface PipelineProgress {
   errors: string[];
   log: string[];
 }
+
+// ── F2: Persona ─────────────────────────────────────────────────────────────
+
+export type PersonaPlatform = "instagram" | "youtube" | "tiktok";
+
+export interface Persona {
+  id: string;
+  name: string; // e.g. "Yash – AI Growth Consultant", "Client: Sharma Insurance"
+  niche: string; // "Insurance tips for new immigrants in Canada"
+  avatar: {
+    // ONE specific target viewer
+    who: string; // "First-year newcomers in the GTA, 25–35, first job"
+    painPoints: string[]; // 3–5
+    desires: string[]; // 3–5
+    objections: string[]; // optional
+  };
+  topics: string[]; // 3–6 narrow content pillars
+  voice: {
+    tone: string; // "friendly, direct, slightly funny"
+    language: string; // "English", "Hinglish", "Marathi"...
+    phrasesToUse: string[];
+    phrasesToAvoid: string[];
+    sampleScript?: string; // 1–3 of their past scripts/captions
+  };
+  offer?: string; // what they sell / the CTA destination
+  platforms: PersonaPlatform[];
+  handles?: { instagram?: string; youtube?: string; tiktok?: string };
+  createdAt: string;
+  updatedAt: string;
+}
