@@ -1,2 +1,7 @@
 # Local JSON store files written by virality-platform/src/lib/store.ts
 data/*.json
+
+# Secrets (API keys) — never commit
+.env
+.env.*
+!.env.example
