@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Film, Play, Users, Settings2, Search, Eye, Zap, FileText, TrendingUp,
-  Compass, UserCircle2, BookOpen, LineChart, type LucideIcon,
+  Compass, UserCircle2, BookOpen, LineChart, LogOut, type LucideIcon,
 } from "lucide-react";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
@@ -98,6 +98,17 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="px-5 py-4">
+        <button
+          type="button"
+          onClick={async () => {
+            await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+            window.location.assign("/login");
+          }}
+          className="mb-2 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-white/[0.04] hover:text-foreground"
+        >
+          <LogOut className="h-4 w-4" />
+          Sign out
+        </button>
         <div className="rounded-xl bg-gradient-to-br from-violet-500/10 to-fuchsia-500/10 border border-violet-500/20 p-3">
           <p className="text-[11px] font-semibold text-violet-600 dark:text-violet-300">Success Tales Media</p>
           <p className="text-[10px] text-muted-foreground mt-0.5">Content Intelligence Platform</p>
