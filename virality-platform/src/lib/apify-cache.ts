@@ -9,14 +9,15 @@ import { getStore } from "./store";
 
 const COLLECTION = "apify_cache";
 
-const HOUR = 60 * 60 * 1000;
+const DAY = 24 * 60 * 60 * 1000;
+// How long a saved Apify result is reused. The Refresh buttons (fresh=1) always fetch live data.
 export const APIFY_CACHE_TTL = {
-  /** keyword / hashtag searches */
-  search: 24 * HOUR,
-  /** creator stats, creator reels, ig-profile, profile details */
-  creator: 12 * HOUR,
+  /** keyword / hashtag searches: trends move fast */
+  search: 3 * DAY,
+  /** creator reels, creator stats, profile details: creators post a few times a week */
+  creator: 15 * DAY,
   /** reel transcripts never change */
-  transcript: 30 * 24 * HOUR,
+  transcript: 30 * DAY,
 } as const;
 
 interface CacheDoc<T> {
@@ -56,9 +57,9 @@ export async function getCached<T>(key: string, maxAgeMs: number): Promise<T | n
   return null;
 }
 
-export async function setCached<T>(key: string, data: T): Promise<void> {
+export async function setCached<T>(key: string, data: T, savedAt = new Date().toISOString()): Promise<void> {
   try {
-    await getStore().upsert<CacheDoc<T>>(COLLECTION, { id: key, savedAt: new Date().toISOString(), data });
+    await getStore().upsert<CacheDoc<T>>(COLLECTION, { id: key, savedAt, data });
   } catch (err) {
     // A failed cache write must never break the request itself.
     console.warn(`[apify-cache] write failed for ${key}`, err);
@@ -75,25 +76,44 @@ function worthCaching(data: unknown): boolean {
 }
 
 /**
- * Run an Apify call through the cache.
+ * Run an Apify call through the cache, and say how old the result is.
  * `run` does the real request; it only happens on a miss or when `fresh` is true.
  */
+export async function withApifyCacheMeta<T>(
+  actor: string,
+  input: unknown,
+  opts: { maxAgeMs: number; fresh?: boolean },
+  run: () => Promise<T>
+): Promise<{ data: T; savedAt: string; fromCache: boolean }> {
+  const key = apifyCacheKey(actor, input);
+  if (!opts.fresh) {
+    try {
+      const doc = await getStore().get<CacheDoc<T>>(COLLECTION, key);
+      if (doc && Date.now() - Date.parse(doc.savedAt) < opts.maxAgeMs) {
+        console.info(`[apify-cache] HIT ${key}`);
+        return { data: doc.data, savedAt: doc.savedAt, fromCache: true };
+      }
+    } catch (err) {
+      console.warn(`[apify-cache] read failed for ${key}`, err);
+    }
+    console.info(`[apify-cache] MISS ${key}`);
+  } else {
+    console.info(`[apify-cache] FRESH ${key}`);
+  }
+  const data = await run();
+  const savedAt = new Date().toISOString();
+  if (worthCaching(data)) await setCached(key, data, savedAt);
+  return { data, savedAt, fromCache: false };
+}
+
+/** Same as withApifyCacheMeta, returning only the data. */
 export async function withApifyCache<T>(
   actor: string,
   input: unknown,
   opts: { maxAgeMs: number; fresh?: boolean },
   run: () => Promise<T>
 ): Promise<T> {
-  const key = apifyCacheKey(actor, input);
-  if (!opts.fresh) {
-    const hit = await getCached<T>(key, opts.maxAgeMs);
-    if (hit !== null) return hit;
-  } else {
-    console.info(`[apify-cache] FRESH ${key}`);
-  }
-  const data = await run();
-  if (worthCaching(data)) await setCached(key, data);
-  return data;
+  return (await withApifyCacheMeta(actor, input, opts, run)).data;
 }
 
 /** `?fresh=1` or `{ fresh: true }` asks for live data, skipping the cache. */

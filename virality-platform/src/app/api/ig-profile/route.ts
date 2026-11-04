@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { APIFY_CACHE_TTL, wantsFresh, withApifyCache } from "@/lib/apify-cache";
+import { APIFY_CACHE_TTL, wantsFresh, withApifyCacheMeta } from "@/lib/apify-cache";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
       addParentData: false,
       timeoutSecs: 180,
     };
-    const data = await withApifyCache("apify~instagram-scraper", input, { maxAgeMs: APIFY_CACHE_TTL.creator, fresh: wantsFresh(searchParams) }, async () => {
+    const { data, savedAt, fromCache } = await withApifyCacheMeta("apify~instagram-scraper", input, { maxAgeMs: APIFY_CACHE_TTL.creator, fresh: wantsFresh(searchParams) }, async () => {
     const res = await fetch(
       `https://api.apify.com/v2/acts/apify~instagram-scraper/run-sync-get-dataset-items?token=${token}&timeout=200`,
       { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }
@@ -68,7 +68,7 @@ export async function GET(req: NextRequest) {
         { status: 404 }
       );
     }
-    return NextResponse.json({ reels, total: data.length });
+    return NextResponse.json({ reels, total: data.length, savedAt, fromCache });
   } catch (err: any) {
     if (err instanceof ApifyLimitError) return NextResponse.json({ error: LIMIT_MESSAGE }, { status: 402 });
     console.error("[ig-profile] error:", err.message);

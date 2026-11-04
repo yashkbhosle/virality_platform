@@ -86,17 +86,19 @@ Instagram data comes from Apify, which charges per result. To avoid paying twice
 
 | Call | Max results | Cached for |
 |---|---|---|
-| Keyword Research, Instagram (`/api/instagram`) | 100 | 24 hours |
-| Discover hashtag search | 60 per run | 24 hours |
-| Creator reels on the Watchlist (`/api/ig-profile`) | 200 | 12 hours |
-| Profile lookups (Discover, add creator) | 1 per profile | 12 hours |
-| Creator stats, last 30 days (`scrapeCreatorStats`) | 60, newer than 30 days | 12 hours |
-| Pipeline reels (`scrapeReels`) | 3 × max videos (60 to 150), newer than *n* days | 12 hours |
+| Keyword Research, Instagram (`/api/instagram`) | 100 | 3 days |
+| Discover hashtag search | 60 per run | 3 days |
+| Creator reels on the Watchlist (`/api/ig-profile`) | 200 | 15 days |
+| Profile lookups (Discover, add creator) | 1 per profile | 15 days |
+| Creator stats, last 30 days (`scrapeCreatorStats`) | 60, newer than 30 days | 15 days |
+| Pipeline reels (`scrapeReels`) | 3 × max videos (60 to 150), newer than *n* days | 15 days |
 | Reel transcript (`/api/ig-analyze`) | 1 | 30 days |
 | My Channel snapshots | 1 profile + 20 reels | not cached (always live) |
 
 - The cache key is the actor name plus a hash of its exact input, so a different hashtag, username or limit is a different entry.
 - Empty or error-only results (Apify outages, missing profiles) are never cached.
+- Saved results are older data: new posts and growing view counts show up only after a refresh. The Watchlist shows how old its reels are ("Saved copy from 3 days ago").
+- Date filters use Apify's relative form (`"30 days"`), so the same request keeps the same cache key from day to day. The lengths live in `APIFY_CACHE_TTL` in `src/lib/apify-cache.ts`.
 - **Force a refresh:** the Watchlist **Refresh** button and Discover's **Refresh** fetch live data. In the API, add `?fresh=1` (GET) or `{ "fresh": true }` (POST body), e.g. `/api/ig-profile?username=x&fresh=1`.
 - The server log shows `[apify-cache] HIT`, `MISS` or `FRESH` with the key for each call.
 

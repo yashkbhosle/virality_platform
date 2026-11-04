@@ -104,8 +104,8 @@ export async function scrapeReels(
     resultsType: "posts",
     // Enough headroom to rank by views, without paying for hundreds of old reels.
     resultsLimit: Math.min(Math.max(maxVideos * 3, 60), 150),
-    // Only reels from the last nDays (the actor accepts YYYY-MM-DD).
-    onlyPostsNewerThan: new Date(Date.now() - nDays * 86400000).toISOString().slice(0, 10),
+    // Only reels from the last nDays. Relative form ("30 days") keeps the cache key the same from day to day.
+    onlyPostsNewerThan: `${Math.max(1, Math.round(nDays))} days`,
     isUserReelFeedURL: true,
     addParentData: false,
     timeoutSecs: 180,
@@ -161,7 +161,8 @@ export async function scrapeCreatorStats(username: string, opts: { fresh?: boole
     directUrls: [`https://www.instagram.com/${username}/reels/`],
     resultsType: "posts",
     resultsLimit: 60,
-    onlyPostsNewerThan: new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10),
+    // Relative form keeps the cache key stable across days; the in-code 30-day filter below stays exact.
+    onlyPostsNewerThan: "30 days",
     isUserReelFeedURL: true,
     addParentData: false,
     timeoutSecs: 180,
