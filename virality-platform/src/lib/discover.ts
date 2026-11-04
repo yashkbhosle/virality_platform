@@ -221,7 +221,7 @@ export async function fetchInstagramProfiles(usernames: string[], opts: { fresh?
     directUrls: usernames.map((u) => `https://www.instagram.com/${u}/`),
     resultsType: "details",
     resultsLimit: 1,
-  }, 240, { maxAgeMs: APIFY_CACHE_TTL.creator, fresh: opts.fresh });
+  }, 240, { maxAgeMs: APIFY_CACHE_TTL.profile, fresh: opts.fresh });
 }
 
 async function discoverInstagram(hashtags: string[], opts: { fresh?: boolean } = {}): Promise<{ candidates: Candidate[]; belowNano: number }> {
