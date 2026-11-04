@@ -95,10 +95,10 @@ Instagram data comes from Apify, which charges per result. To avoid paying twice
 |---|---|---|
 | Keyword Research, Instagram (`/api/instagram`) | 100 | 3 days |
 | Discover hashtag search | 60 per run | 3 days |
-| Creator reels on the Watchlist (`/api/ig-profile`) | 200 | 15 days |
-| Profile lookups (Discover, add creator) | 1 per profile | 15 days |
-| Creators page stats, last 30 days (`scrapeCreatorStats`: Add, Refresh) | 1 profile + 60 reels, newer than 30 days | 3 days |
-| Pipeline reels (`scrapeReels`) | 3 × max videos (60 to 150), newer than *n* days | 15 days |
+| Creator reels on the Watchlist (`/api/ig-profile`) | 200 | 7 days |
+| Profile lookups (Discover, add creator) | 1 per profile | 30 days |
+| Creators page stats, last 30 days (`scrapeCreatorStats`: Add, Refresh) | 1 profile + 60 reels, newer than 30 days | 7 days |
+| Pipeline reels (`scrapeReels`) | 3 × max videos (60 to 150), newer than *n* days | 7 days |
 | Reel transcript (`/api/ig-analyze`) | 1 | 30 days |
 | My Channel snapshots | 1 profile + 20 reels | not cached (always live) |
 
@@ -106,7 +106,7 @@ Instagram data comes from Apify, which charges per result. To avoid paying twice
 - Empty or error-only results (Apify outages, missing profiles) are never cached.
 - Saved results are older data: new posts and growing view counts show up only after a refresh. The Watchlist shows how old its reels are ("Saved copy from 3 days ago").
 - Date filters use Apify's relative form (`"30 days"`), so the same request keeps the same cache key from day to day. The lengths live in `APIFY_CACHE_TTL` in `src/lib/apify-cache.ts`.
-- **Force a refresh:** the Watchlist **Refresh** button and Discover's **Refresh** fetch live data. In the API, add `?fresh=1` (GET) or `{ "fresh": true }` (POST body), e.g. `/api/ig-profile?username=x&fresh=1`.
+- **Force a refresh:** the Watchlist **Refresh** button and Discover's **Refresh** fetch live data. On the Creators page, the refresh icon on a creator card fetches live stats, while **Refresh All** only updates creators whose stats are over 7 days old. In the API, add `?fresh=1` (GET) or `{ "fresh": true }` (POST body), e.g. `/api/ig-profile?username=x&fresh=1`.
 - The server log shows `[apify-cache] HIT`, `MISS` or `FRESH` with the key for each call.
 
 ## Analysis cache

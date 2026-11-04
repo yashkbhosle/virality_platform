@@ -143,7 +143,7 @@ export default function CreatorsPage() {
       const response = await fetch("/api/creators/refresh", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: [id] }),
+        body: JSON.stringify({ ids: [id], fresh: true }),
       });
 
       const reader = response.body?.getReader();
@@ -175,6 +175,7 @@ export default function CreatorsPage() {
             variant="ghost"
             onClick={handleRefreshAll}
             disabled={refreshing}
+            title="Updates creators whose stats are over 7 days old. Newer ones are kept as they are (free)."
             className="rounded-xl glass border-white/[0.08] gap-1.5 text-xs"
           >
             {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
@@ -298,6 +299,7 @@ export default function CreatorsPage() {
                     size="sm"
                     onClick={() => handleRefreshOne(creator.id)}
                     disabled={isRefreshing}
+                    title="Get live stats for this creator now (uses Apify credits)"
                     className="h-7 w-7 p-0 rounded-lg text-muted-foreground hover:text-foreground"
                   >
                     {isRefreshing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}

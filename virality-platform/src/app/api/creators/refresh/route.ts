@@ -1,4 +1,4 @@
-import { wantsFresh } from "@/lib/apify-cache";
+import { APIFY_CACHE_TTL, wantsFresh } from "@/lib/apify-cache";
 import { getCreator, listCreators, saveCreator } from "@/lib/pipeline-data";
 import { scrapeCreatorStats } from "@/lib/apify";
 
@@ -7,7 +7,7 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const ids: string[] = body.ids || [];
-  // Stats saved in the last 3 days are reused (free); { fresh: true } forces a live lookup.
+  // Creators updated in the last 7 days are skipped (free); { fresh: true } forces a live lookup.
   const fresh = wantsFresh(body);
 
   const creators = await listCreators();
@@ -20,6 +20,13 @@ export async function POST(request: Request) {
     async start(controller) {
       for (const creator of toRefresh) {
         try {
+          const age = Date.now() - Date.parse(creator.lastScrapedAt || "");
+          if (!fresh && age < APIFY_CACHE_TTL.creatorStats) {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ type: "progress", username: creator.username, status: "skipped" })}\n\n`)
+            );
+            continue;
+          }
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify({ type: "progress", username: creator.username, status: "scraping" })}\n\n`)
           );

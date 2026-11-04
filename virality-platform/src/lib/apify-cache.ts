@@ -14,10 +14,12 @@ const DAY = 24 * 60 * 60 * 1000;
 export const APIFY_CACHE_TTL = {
   /** keyword / hashtag searches: trends move fast */
   search: 3 * DAY,
-  /** creator reels, creator stats, profile details: creators post a few times a week */
-  creator: 15 * DAY,
-  /** Creators page stats (followers, reels and average views in the last 30 days) */
-  creatorStats: 3 * DAY,
+  /** a creator's reels (Watchlist, pipeline): a reel gets most of its views in its first week */
+  creator: 7 * DAY,
+  /** Creators page stats (followers, reels and average views over 30 days): matches a weekly research routine */
+  creatorStats: 7 * DAY,
+  /** profile details (bio, picture, follower count for size tiers): rarely change */
+  profile: 30 * DAY,
   /** reel transcripts never change */
   transcript: 30 * DAY,
 } as const;
