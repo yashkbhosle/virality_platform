@@ -6,6 +6,7 @@
 // 4. One batched Gemini call scores niche relevance for every candidate.
 // 5. Score, drop ad-driven channels, group by size tier.
 
+import { APIFY_CACHE_TTL, withApifyCache } from "./apify-cache";
 import { geminiJSON } from "./gemini-json";
 import { isLikelyAdDrivenChannel } from "./virality";
 import {
@@ -42,14 +43,26 @@ export async function ytGet<T>(path: string, params: Record<string, string | num
   return res.json() as Promise<T>;
 }
 
-export async function apifyRun<T>(actor: string, input: Record<string, unknown>, timeoutSecs = 240): Promise<T[]> {
-  const res = await fetch(
-    `${APIFY_BASE}/${actor}/run-sync-get-dataset-items?token=${env("APIFY_API_TOKEN")}&timeout=${timeoutSecs}`,
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }
-  );
-  if (!res.ok) throw new Error(`Apify ${actor} ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const data = await res.json();
-  return Array.isArray(data) ? (data as T[]) : [];
+/**
+ * Runs an Apify actor. Pass `cache` to reuse a recent identical run (see apify-cache.ts).
+ * My Channel snapshots deliberately pass no cache: they must be live.
+ */
+export async function apifyRun<T>(
+  actor: string,
+  input: Record<string, unknown>,
+  timeoutSecs = 240,
+  cache?: { maxAgeMs: number; fresh?: boolean }
+): Promise<T[]> {
+  const run = async () => {
+    const res = await fetch(
+      `${APIFY_BASE}/${actor}/run-sync-get-dataset-items?token=${env("APIFY_API_TOKEN")}&timeout=${timeoutSecs}`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }
+    );
+    if (!res.ok) throw new Error(`Apify ${actor} ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const data = await res.json();
+    return Array.isArray(data) ? (data as T[]) : [];
+  };
+  return cache ? withApifyCache(actor, input, cache, run) : run();
 }
 
 function sixMonthsAgoISO() {
@@ -202,23 +215,23 @@ export function profileAvgPlays(p: IGProfile): number {
   return plays.length ? Math.round(plays.reduce((s, n) => s + n, 0) / plays.length) : 0;
 }
 
-export async function fetchInstagramProfiles(usernames: string[]): Promise<IGProfile[]> {
+export async function fetchInstagramProfiles(usernames: string[], opts: { fresh?: boolean } = {}): Promise<IGProfile[]> {
   if (!usernames.length) return [];
   return apifyRun<IGProfile>("apify~instagram-scraper", {
     directUrls: usernames.map((u) => `https://www.instagram.com/${u}/`),
     resultsType: "details",
     resultsLimit: 1,
-  });
+  }, 240, { maxAgeMs: APIFY_CACHE_TTL.creator, fresh: opts.fresh });
 }
 
-async function discoverInstagram(hashtags: string[]): Promise<{ candidates: Candidate[]; belowNano: number }> {
+async function discoverInstagram(hashtags: string[], opts: { fresh?: boolean } = {}): Promise<{ candidates: Candidate[]; belowNano: number }> {
   // "reels" mode returns video posts with play counts (plain "posts" is mostly images).
   const s = Date.now();
   const posts = await apifyRun<IGPost>("apify~instagram-hashtag-scraper", {
     hashtags,
     resultsLimit: DISCOVERY_LIMITS.hashtagResultsLimit,
     resultsType: "reels",
-  });
+  }, 240, { maxAgeMs: APIFY_CACHE_TTL.search, fresh: opts.fresh });
   console.info(`[discover] instagram hashtags: ${posts.length} reels in ${((Date.now() - s) / 1000).toFixed(1)}s`);
 
   const owners = new Map<string, { count: number; plays: number[]; captions: string[]; fullName?: string }>();
@@ -247,7 +260,7 @@ async function discoverInstagram(hashtags: string[]): Promise<{ candidates: Cand
     .sort((a, b) => maxPlays(b[1]) - maxPlays(a[1]));
   const shortlisted = [...primary, ...fill].slice(0, DISCOVERY_LIMITS.maxInstagramProfiles);
 
-  const profiles = await fetchInstagramProfiles(shortlisted.map(([u]) => u));
+  const profiles = await fetchInstagramProfiles(shortlisted.map(([u]) => u), opts);
   const byName = new Map(profiles.filter((p) => p.username).map((p) => [p.username!.toLowerCase(), p]));
 
   const candidates: Candidate[] = [];
@@ -345,7 +358,7 @@ export function toDiscovered(c: Candidate, relevance: number | null, score: numb
 
 // ── Orchestration ───────────────────────────────────────────────────────────
 
-export async function runDiscovery(description: string, platforms: CreatorPlatform[]): Promise<Omit<DiscoverResult, "fromCache" | "cachedAt">> {
+export async function runDiscovery(description: string, platforms: CreatorPlatform[], opts: { fresh?: boolean } = {}): Promise<Omit<DiscoverResult, "fromCache" | "cachedAt">> {
   const notes: string[] = [];
   const t0 = Date.now();
   const lap = (label: string, since: number) => console.info(`[discover] ${label}: ${((Date.now() - since) / 1000).toFixed(1)}s`);
@@ -358,7 +371,7 @@ export async function runDiscovery(description: string, platforms: CreatorPlatfo
   };
   const [yt, ig] = await Promise.allSettled([
     platforms.includes("youtube") && queries.youtubeQueries.length ? timed("youtube", discoverYouTube(queries.youtubeQueries)) : Promise.resolve(null),
-    platforms.includes("instagram") && queries.instagramHashtags.length ? timed("instagram", discoverInstagram(queries.instagramHashtags)) : Promise.resolve(null),
+    platforms.includes("instagram") && queries.instagramHashtags.length ? timed("instagram", discoverInstagram(queries.instagramHashtags, opts)) : Promise.resolve(null),
   ]);
 
   let candidates: Candidate[] = [];

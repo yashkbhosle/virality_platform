@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { APIFY_CACHE_TTL, withApifyCache } from "@/lib/apify-cache";
 import { buildViralAnalysisPrompt, normalizeExtras, type ViralAnalysis } from "@/lib/analysis-prompt";
 import { geminiJSON } from "@/lib/gemini-json";
 import type { ViralityMetrics } from "@/lib/virality";
@@ -9,22 +10,18 @@ export const maxDuration = 120;
 async function fetchReelTranscript(reelUrl: string): Promise<string> {
   const token = process.env.APIFY_API_TOKEN;
   if (!token) return "";
+  const input = { username: [reelUrl], resultsLimit: 1, includeTranscript: true };
   try {
-    const res = await fetch(
-      `https://api.apify.com/v2/acts/apify~instagram-reel-scraper/run-sync-get-dataset-items?token=${token}&timeout=60`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: [reelUrl],
-          resultsLimit: 1,
-          includeTranscript: true,
-        }),
-      }
-    );
-    if (!res.ok) return "";
-    const data = await res.json();
-    return data[0]?.transcript || "";
+    // Transcripts never change, so one lookup per reel is enough for 30 days.
+    return await withApifyCache("apify~instagram-reel-scraper", input, { maxAgeMs: APIFY_CACHE_TTL.transcript }, async () => {
+      const res = await fetch(
+        `https://api.apify.com/v2/acts/apify~instagram-reel-scraper/run-sync-get-dataset-items?token=${token}&timeout=60`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }
+      );
+      if (!res.ok) return "";
+      const data = await res.json();
+      return (data[0]?.transcript as string) || "";
+    });
   } catch {
     return "";
   }

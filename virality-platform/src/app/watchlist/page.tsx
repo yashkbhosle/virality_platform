@@ -623,10 +623,11 @@ function InstagramTab() {
     try { await untrackCreator(id); } catch { setCreators(prev); setListError("Couldn't remove this creator. Please try again."); }
   };
 
-  const fetchTopReels = async (creator: TrackedCreator) => {
+  // fresh = the Refresh button: skip the server's Apify cache and fetch live reels.
+  const fetchTopReels = async (creator: TrackedCreator, fresh = false) => {
     setProfileReels(prev => ({ ...prev, [creator.id]: { reels: [], loading: true } }));
     try {
-      const res = await fetch(`/api/ig-profile?username=${encodeURIComponent(creator.handle)}&limit=20`);
+      const res = await fetch(`/api/ig-profile?username=${encodeURIComponent(creator.handle)}&limit=20${fresh ? "&fresh=1" : ""}`);
       const data = await res.json().catch(() => ({ error: "Couldn't load reels right now. Please try again." }));
       if (data.error) throw new Error(data.error);
       setProfileReels(prev => ({ ...prev, [creator.id]: { reels: data.reels || [], loading: false } }));
@@ -761,7 +762,7 @@ function InstagramTab() {
                   </div>
                   <div className="flex gap-2 flex-wrap">
                     <Button variant="ghost" size="sm"
-                      onClick={() => fetchTopReels(creator)}
+                      onClick={() => fetchTopReels(creator, (reelState?.reels?.length ?? 0) > 0)}
                       disabled={reelState?.loading}
                       className="rounded-xl glass border-white/[0.06] text-xs h-8 gap-1.5">
                       {reelState?.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Film className="h-3 w-3" />}

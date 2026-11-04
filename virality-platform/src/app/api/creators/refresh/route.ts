@@ -22,7 +22,7 @@ export async function POST(request: Request) {
             encoder.encode(`data: ${JSON.stringify({ type: "progress", username: creator.username, status: "scraping" })}\n\n`)
           );
 
-          const stats = await scrapeCreatorStats(creator.username);
+          const stats = await scrapeCreatorStats(creator.username, { fresh: true });
           const current = readCreators();
           const idx = current.findIndex((c) => c.id === creator.id);
           if (idx !== -1) {

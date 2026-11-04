@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { APIFY_CACHE_TTL, wantsFresh, withApifyCache } from "@/lib/apify-cache";
 import { computeViralityMetrics } from "@/lib/virality";
 
 const PERIOD_DAYS: Record<string, number> = { "14d": 14, "30d": 30, "6mo": 180, "1y": 365, "2y": 730 };
@@ -26,22 +27,20 @@ export async function GET(req: NextRequest) {
   if (!tag) return NextResponse.json({ error: "Use letters or numbers for an Instagram hashtag search." }, { status: 400 });
 
   try {
-    const res = await fetch(
-      `https://api.apify.com/v2/acts/apify~instagram-hashtag-scraper/run-sync-get-dataset-items?token=${token}&timeout=200`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          hashtags: [tag],
-          resultsLimit: 100,
-          // "reels" returns video posts with play counts; "posts" is mostly images.
-          resultsType: "reels",
-        }),
-      }
-    );
-    if (!res.ok) throw new Error(`Apify error ${res.status}: ${(await res.text()).slice(0, 300)}`);
-
-    const raw: unknown = await res.json();
+    const input = {
+      hashtags: [tag],
+      resultsLimit: 100,
+      // "reels" returns video posts with play counts; "posts" is mostly images.
+      resultsType: "reels",
+    };
+    const raw: unknown = await withApifyCache("apify~instagram-hashtag-scraper", input, { maxAgeMs: APIFY_CACHE_TTL.search, fresh: wantsFresh(searchParams) }, async () => {
+      const res = await fetch(
+        `https://api.apify.com/v2/acts/apify~instagram-hashtag-scraper/run-sync-get-dataset-items?token=${token}&timeout=200`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }
+      );
+      if (!res.ok) throw new Error(`Apify error ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      return (await res.json()) as unknown;
+    });
     const data = (Array.isArray(raw) ? raw : []) as IGItem[];
 
     // Period filter — previously the selected period was ignored for Instagram
