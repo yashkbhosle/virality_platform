@@ -65,8 +65,8 @@ function PostRow({ post, rank, channel, onAnalyzed }: {
   const [error, setError] = useState("");
   const m = post.metrics;
 
-  const analyze = () => {
-    if (analysis) {
+  const analyze = (fresh = false) => {
+    if (!fresh && analysis) {
       setOpen((v) => !v);
       return;
     }
@@ -78,8 +78,8 @@ function PostRow({ post, rank, channel, onAnalyzed }: {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(
         isYT
-          ? { url: post.url, title: post.title, channelTitle: channel.title, views: post.views, likes: post.likes, comments: post.comments, metrics: m }
-          : { url: post.url, caption: post.title, plays: post.views, likes: post.likes, comments: post.comments, username: channel.handle, metrics: m }
+          ? { url: post.url, title: post.title, channelTitle: channel.title, views: post.views, likes: post.likes, comments: post.comments, metrics: m, fresh }
+          : { url: post.url, caption: post.title, plays: post.views, likes: post.likes, comments: post.comments, username: channel.handle, metrics: m, fresh }
       ),
     })
       .then(async (r) => {
@@ -121,16 +121,18 @@ function PostRow({ post, rank, channel, onAnalyzed }: {
             {m.outlierScore !== null && <span className="text-muted-foreground">{m.outlierScore}× your average</span>}
           </div>
         </div>
-        <Button size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 rounded-full text-xs" onClick={analyze} disabled={loading}>
+        <Button size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 rounded-full text-xs" onClick={() => analyze()} disabled={loading}>
           {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <BookOpen className="h-3 w-3" />}
           {analysis ? (open ? "Hide" : "Show") : "Analyze"}
         </Button>
       </div>
-      {error && <p className="px-4 pb-3 text-xs text-red-600 dark:text-red-300">{error} <button className="underline" onClick={analyze}>Retry</button></p>}
+      {error && <p className="px-4 pb-3 text-xs text-red-600 dark:text-red-300">{error} <button className="underline" onClick={() => analyze()}>Retry</button></p>}
       {open && analysis && (
         <AnalysisPanel
           data={analysis}
           source={{ url: post.url, title: post.title, views: post.views }}
+          onReanalyze={() => analyze(true)}
+          reanalyzing={loading}
           onDownload={() => {
             const blob = new Blob([analysis.transcript], { type: "text/plain" });
             const u = URL.createObjectURL(blob);

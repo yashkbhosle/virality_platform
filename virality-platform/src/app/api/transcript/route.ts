@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildViralAnalysisPrompt, normalizeExtras, type ViralAnalysis } from "@/lib/analysis-prompt";
 import { geminiJSON } from "@/lib/gemini-json";
+import { withAnalysisCache, youtubeAnalysisKey } from "@/lib/analysis-cache";
+import { wantsFresh } from "@/lib/apify-cache";
 import type { ViralityMetrics } from "@/lib/virality";
 
 export const maxDuration = 120;
@@ -41,7 +43,8 @@ async function analyzeVideoWithGemini(
 }
 
 export async function POST(req: NextRequest) {
-  const { url, title, channelTitle, views = 0, likes = 0, comments = 0, metrics = null } = await req.json();
+  const body = await req.json();
+  const { url, title, channelTitle, views = 0, likes = 0, comments = 0, metrics = null } = body;
 
   try {
     const videoId = extractYouTubeId(url);
@@ -49,17 +52,21 @@ export async function POST(req: NextRequest) {
 
     // Gemini accepts both watch and shorts URLs directly
     const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    const result = await analyzeVideoWithGemini(watchUrl, {
-      title: title || "",
-      creator: channelTitle || "",
-      views: Number(views) || 0,
-      likes: Number(likes) || 0,
-      comments: Number(comments) || 0,
-      metrics,
+    // A video's content never changes, so a saved analysis is reused (free). Re-analyze sends fresh: true.
+    const { result, savedAt, fromCache } = await withAnalysisCache(youtubeAnalysisKey(videoId), { fresh: wantsFresh(body) }, async () => {
+      const raw = await analyzeVideoWithGemini(watchUrl, {
+        title: title || "",
+        creator: channelTitle || "",
+        views: Number(views) || 0,
+        likes: Number(likes) || 0,
+        comments: Number(comments) || 0,
+        metrics,
+      });
+      const { transcript = "", ...analysis } = raw;
+      return { transcript, analysis };
     });
 
-    const { transcript = "", ...analysis } = result;
-    return NextResponse.json({ transcript, analysis });
+    return NextResponse.json({ ...result, savedAt, fromCache });
   } catch (err) {
     console.error("[transcript] analysis failed", err);
     return NextResponse.json({ error: "Couldn't analyze this video right now. Please try again in a minute." }, { status: 502 });

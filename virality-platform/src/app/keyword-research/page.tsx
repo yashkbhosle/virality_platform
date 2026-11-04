@@ -335,8 +335,8 @@ export default function KeywordResearchPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only when results change, not on every keystroke
   }, [videos, igReels]);
 
-  const fetchTranscript = async (video: Video) => {
-    if (transcriptData[video.id]) {
+  const fetchTranscript = async (video: Video, fresh = false) => {
+    if (!fresh && transcriptData[video.id]) {
       setExpandedTranscript(expandedTranscript === video.id ? null : video.id);
       return;
     }
@@ -346,7 +346,7 @@ export default function KeywordResearchPage() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url: video.url, title: video.title, channelTitle: video.channelTitle,
-          views: video.views, likes: video.likes, comments: video.comments, metrics: video.metrics ?? null,
+          views: video.views, likes: video.likes, comments: video.comments, metrics: video.metrics ?? null, fresh,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -358,8 +358,8 @@ export default function KeywordResearchPage() {
     finally { setTranscriptLoading(null); }
   };
 
-  const fetchIgAnalysis = async (reel: IGReel) => {
-    if (igAnalysisData[reel.id]) {
+  const fetchIgAnalysis = async (reel: IGReel, fresh = false) => {
+    if (!fresh && igAnalysisData[reel.id]) {
       setIgExpanded(igExpanded === reel.id ? null : reel.id);
       return;
     }
@@ -367,7 +367,7 @@ export default function KeywordResearchPage() {
     try {
       const res = await fetch("/api/ig-analyze", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: reel.url, caption: reel.caption, plays: reel.plays, likes: reel.likes, comments: reel.comments, username: reel.ownerUsername, metrics: reel.metrics ?? null }),
+        body: JSON.stringify({ url: reel.url, caption: reel.caption, plays: reel.plays, likes: reel.likes, comments: reel.comments, username: reel.ownerUsername, metrics: reel.metrics ?? null, fresh }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.error) throw new Error(data.error);
@@ -692,6 +692,8 @@ export default function KeywordResearchPage() {
                           <AnalysisPanel
                             data={transcriptData[video.id]}
                             source={{ url: video.url, title: video.title, views: video.views }}
+                            onReanalyze={() => fetchTranscript(video, true)}
+                            reanalyzing={transcriptLoading === video.id}
                             onDownload={() => {
                               const blob = new Blob([transcriptData[video.id].transcript], { type: "text/plain" });
                               const u = URL.createObjectURL(blob);
@@ -882,6 +884,8 @@ export default function KeywordResearchPage() {
                           <AnalysisPanel
                             data={igAnalysisData[reel.id]}
                             source={{ url: reel.url, title: reel.caption.slice(0, 120), views: reel.plays }}
+                            onReanalyze={() => fetchIgAnalysis(reel, true)}
+                            reanalyzing={igAnalysisLoading === reel.id}
                             onDownload={() => {
                               const blob = new Blob([igAnalysisData[reel.id].transcript], { type: "text/plain" });
                               const u = URL.createObjectURL(blob);

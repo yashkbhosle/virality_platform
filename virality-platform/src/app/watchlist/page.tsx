@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import Link from "next/link";
+import { SavedAnalysisNote } from "@/components/analysis-panel";
 import { formatCount, tierLabel, type SizeTier, type TrackedCreator } from "@/lib/creators-shared";
 import { listTracked, migrateLegacyWatchlist, trackCreator, untrackCreator } from "@/lib/tracked-creators-client";
 import { usePersonas } from "@/lib/use-personas";
@@ -45,13 +46,18 @@ interface TranscriptData {
     hook: string; format: string; whyViral: string; keyTopics: string[];
     contentFormat: string; hookType: string; cta: string;
   };
+  savedAt?: string;
+  fromCache?: boolean;
 }
 
 // ── Analysis panel ────────────────────────────────────────────────────
-function AnalysisPanel({ data, onDownload }: { data: TranscriptData; onDownload: () => void }) {
+function AnalysisPanel({ data, onDownload, onReanalyze, reanalyzing }: {
+  data: TranscriptData; onDownload: () => void; onReanalyze?: () => void; reanalyzing?: boolean;
+}) {
   const [showFull, setShowFull] = useState(false);
   return (
     <div className="border-t border-white/[0.06] bg-white/[0.01] px-5 py-4 space-y-3">
+      <SavedAnalysisNote savedAt={data.savedAt} fromCache={data.fromCache} onReanalyze={onReanalyze} busy={reanalyzing} />
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {[
           { label: "Hook Type", val: data.analysis.hookType, color: "text-orange-400" },
@@ -248,15 +254,15 @@ function YoutubeTab() {
   const toggleCompetitor = (handle: string) =>
     setCompetitors(prev => prev.includes(handle) ? prev.filter(c => c !== handle) : [...prev, handle]);
 
-  const fetchTranscript = async (v: any) => {
+  const fetchTranscript = async (v: any, fresh = false) => {
     if (transcriptLoading) return;
-    if (expandedTranscript === v.id) { setExpandedTranscript(null); return; }
-    if (transcriptData[v.id]) { setExpandedTranscript(v.id); return; }
+    if (!fresh && expandedTranscript === v.id) { setExpandedTranscript(null); return; }
+    if (!fresh && transcriptData[v.id]) { setExpandedTranscript(v.id); return; }
     setTranscriptLoading(v.id);
     try {
       const res = await fetch("/api/transcript", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: v.url, title: v.title }),
+        body: JSON.stringify({ url: v.url, title: v.title, fresh }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -534,7 +540,7 @@ function YoutubeTab() {
                           </div>
                         </div>
                         {expandedTranscript === v.id && transcriptData[v.id] && (
-                          <AnalysisPanel data={transcriptData[v.id]} onDownload={() => downloadCSV(entry.id, sortedVideos)} />
+                          <AnalysisPanel data={transcriptData[v.id]} onDownload={() => downloadCSV(entry.id, sortedVideos)} onReanalyze={() => fetchTranscript(v, true)} reanalyzing={transcriptLoading === v.id} />
                         )}
                       </div>
                     ))}
@@ -646,18 +652,18 @@ function InstagramTab() {
     }
   };
 
-  const analyzeReel = async (reel: IgReel, creatorUsername: string) => {
+  const analyzeReel = async (reel: IgReel, creatorUsername: string, fresh = false) => {
     const key = reel.url;
     if (analysisLoading) return;
-    if (expandedAnalysis === key) { setExpandedAnalysis(null); return; }
-    if (igAnalysis[key]) { setExpandedAnalysis(key); return; }
+    if (!fresh && expandedAnalysis === key) { setExpandedAnalysis(null); return; }
+    if (!fresh && igAnalysis[key]) { setExpandedAnalysis(key); return; }
     setAnalysisLoading(key);
     try {
       const res = await fetch("/api/ig-analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          url: reel.url, caption: reel.caption, plays: reel.views, likes: reel.likes, comments: reel.comments, username: creatorUsername,
+          url: reel.url, caption: reel.caption, plays: reel.views, likes: reel.likes, comments: reel.comments, username: creatorUsername, fresh,
         }),
       });
       const data = await res.json();
@@ -856,7 +862,7 @@ function InstagramTab() {
                           </div>
                         </div>
                         {expandedAnalysis === reel.url && igAnalysis[reel.url] && (
-                          <AnalysisPanel data={igAnalysis[reel.url]} onDownload={() => downloadIgCSV(creator, reelState.reels)} />
+                          <AnalysisPanel data={igAnalysis[reel.url]} onDownload={() => downloadIgCSV(creator, reelState.reels)} onReanalyze={() => analyzeReel(reel, creator.handle, true)} reanalyzing={analysisLoading === reel.url} />
                         )}
                       </div>
                     ))}

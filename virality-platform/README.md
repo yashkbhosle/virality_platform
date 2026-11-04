@@ -56,7 +56,7 @@ Every page and API route requires signing in (`/login`). There is one account, s
 
 ## Storage
 
-Personas, tracked creators, saved hooks, scripts, connected channels, snapshots and the discovery cache all go through `src/lib/store.ts` (collections: `personas`, `tracked_creators`, `saved_hooks`, `scripts`, `my_channels`, `channel_snapshots`, `discover_cache`).
+Personas, tracked creators, saved hooks, scripts, connected channels, snapshots and the discovery cache all go through `src/lib/store.ts` (collections: `personas`, `tracked_creators`, `saved_hooks`, `scripts`, `my_channels`, `channel_snapshots`, `discover_cache`, `apify_cache`, `analysis_cache`).
 
 - **Production (Vercel):** set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, then run [`supabase/schema.sql`](supabase/schema.sql) once in the Supabase SQL editor. It creates one `viralos_docs` table with row-level security on; the service role key is only used server-side.
 - **Local:** with no Supabase vars, data is written to `../data/<collection>.json` (git-ignored). This does not persist on Vercel.
@@ -101,6 +101,15 @@ Instagram data comes from Apify, which charges per result. To avoid paying twice
 - Date filters use Apify's relative form (`"30 days"`), so the same request keeps the same cache key from day to day. The lengths live in `APIFY_CACHE_TTL` in `src/lib/apify-cache.ts`.
 - **Force a refresh:** the Watchlist **Refresh** button and Discover's **Refresh** fetch live data. In the API, add `?fresh=1` (GET) or `{ "fresh": true }` (POST body), e.g. `/api/ig-profile?username=x&fresh=1`.
 - The server log shows `[apify-cache] HIT`, `MISS` or `FRESH` with the key for each call.
+
+## Analysis cache
+
+The **Analyze** button (Gemini analysis + transcript) is cached too, in `src/lib/analysis-cache.ts`, collection `analysis_cache`. A video's content never changes, so a saved analysis is reused for 30 days, on every page (Keyword Research, Watchlist, My Channel).
+
+- The key is the video itself: `youtube:<video id>` or `instagram:<shortcode>`, so the same video found on different pages shares one analysis.
+- Only successful analyses are saved; a failed one is tried again next time.
+- The panel says "Saved analysis from 3 days ago (free)" and has a **Re-analyze** button, which sends `{ "fresh": true }` and replaces the saved copy. Instagram transcripts keep their own Apify cache, so a re-analyze only pays for Gemini.
+- The server log shows `[analysis-cache] HIT`, `MISS` or `FRESH`.
 
 ## Cost and quota notes
 

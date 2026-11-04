@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle, BookmarkPlus, Check, CheckCircle, Clapperboard, Copy, Download, FileText,
-  Loader2, MessageCircle, Repeat, Sparkles, Target,
+  Loader2, MessageCircle, RefreshCw, Repeat, Sparkles, Target,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { FrameworkScore, HookFormula, ViralAnalysis, VisualPlaybook } from "@/lib/analysis-prompt";
@@ -15,6 +15,47 @@ import { HookFillPanel } from "@/components/hook-fill-panel";
 export interface TranscriptData {
   transcript: string;
   analysis: ViralAnalysis;
+  /** When this analysis was made (ISO). */
+  savedAt?: string;
+  /** true when the server reused a saved analysis instead of paying for a new one. */
+  fromCache?: boolean;
+}
+
+/** "3 days ago", "5 hours ago", "a few minutes ago" */
+function analysisAge(iso: string): string {
+  const mins = Math.max(0, (Date.now() - Date.parse(iso)) / 60000);
+  if (!Number.isFinite(mins) || mins < 60) return "a few minutes ago";
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+/** One line saying whether this analysis is a saved (free) copy, with a Re-analyze button. */
+export function SavedAnalysisNote({ savedAt, fromCache, onReanalyze, busy }: {
+  savedAt?: string; fromCache?: boolean; onReanalyze?: () => void; busy?: boolean;
+}) {
+  if (!savedAt) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+      <span>
+        {fromCache
+          ? `Saved analysis from ${analysisAge(savedAt)} (free, no credits used).`
+          : "New analysis, just made. It's saved, so opening it again is free."}
+      </span>
+      {fromCache && onReanalyze && (
+        <button
+          type="button"
+          onClick={onReanalyze}
+          disabled={busy}
+          className="inline-flex items-center gap-1 rounded-full border border-white/[0.1] px-2 py-0.5 font-semibold hover:text-foreground disabled:opacity-50"
+          title="Runs the AI again on this video (uses credits)"
+        >
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} Re-analyze
+        </button>
+      )}
+    </div>
+  );
 }
 
 /** The video the analysis came from (used when saving a hook formula). */
@@ -240,11 +281,16 @@ function VisualPlaybookCard({ playbook }: { playbook: VisualPlaybook }) {
 }
 
 // ── Analysis panel ────────────────────────────────────────────────────
-export function AnalysisPanel({ data, source, onDownload }: { data: TranscriptData; source?: AnalysisSource; onDownload: () => void }) {
+export function AnalysisPanel({ data, source, onDownload, onReanalyze, reanalyzing }: {
+  data: TranscriptData; source?: AnalysisSource; onDownload: () => void;
+  /** Runs a new (paid) analysis, skipping the saved one. */
+  onReanalyze?: () => void; reanalyzing?: boolean;
+}) {
   const [showFullTranscript, setShowFullTranscript] = useState(false);
   const a = data.analysis;
   return (
     <div className="border-t border-white/[0.06] p-5 space-y-4">
+      <SavedAnalysisNote savedAt={data.savedAt} fromCache={data.fromCache} onReanalyze={onReanalyze} busy={reanalyzing} />
       {source && (
         <div className="flex justify-end">
           <Link
