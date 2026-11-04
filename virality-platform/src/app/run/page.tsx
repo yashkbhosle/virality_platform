@@ -36,7 +36,7 @@ export default function RunPage() {
   const { running, progress, runPipeline } = usePipeline();
 
   useEffect(() => {
-    fetch("/api/configs").then((r) => r.json()).then(setConfigs);
+    fetch("/api/configs").then((r) => r.json()).then((d) => (Array.isArray(d) ? d : [])).then(setConfigs).catch(() => setConfigs([]));
   }, []);
 
   useEffect(() => {

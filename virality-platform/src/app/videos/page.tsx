@@ -47,8 +47,8 @@ function VideosContent() {
   const [modalSection, setModalSection] = useState<"analysis" | "concepts">("analysis");
 
   useEffect(() => {
-    fetch("/api/videos").then((r) => r.json()).then(setVideos);
-    fetch("/api/configs").then((r) => r.json()).then(setConfigs);
+    fetch("/api/videos").then((r) => r.json()).then((d) => (Array.isArray(d) ? d : [])).then(setVideos).catch(() => setVideos([]));
+    fetch("/api/configs").then((r) => r.json()).then((d) => (Array.isArray(d) ? d : [])).then(setConfigs).catch(() => setConfigs([]));
   }, []);
 
   const uniqueCreators = [...new Set(videos.map((v) => v.creator))].sort();

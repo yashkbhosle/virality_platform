@@ -16,6 +16,8 @@ export const APIFY_CACHE_TTL = {
   search: 3 * DAY,
   /** creator reels, creator stats, profile details: creators post a few times a week */
   creator: 15 * DAY,
+  /** Creators page stats (followers, reels and average views in the last 30 days) */
+  creatorStats: 3 * DAY,
   /** reel transcripts never change */
   transcript: 30 * DAY,
 } as const;

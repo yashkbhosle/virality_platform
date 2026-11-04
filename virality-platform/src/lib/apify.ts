@@ -133,7 +133,8 @@ export async function scrapeReels(
 
 export async function scrapeCreatorStats(username: string, opts: { fresh?: boolean } = {}): Promise<CreatorStats> {
   const token = getToken();
-  const cache = { maxAgeMs: APIFY_CACHE_TTL.creator, fresh: opts.fresh };
+  // Creators page stats are reused for 3 days, so Add and Refresh only pay Apify once per creator per 3 days.
+  const cache = { maxAgeMs: APIFY_CACHE_TTL.creatorStats, fresh: opts.fresh };
 
   // 1. Get profile info (details mode)
   const profileInput = {
