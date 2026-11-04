@@ -26,6 +26,7 @@ New features persist data through `src/lib/store.ts`:
 
 - **Production (Vercel):** set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, then run [`supabase/schema.sql`](supabase/schema.sql) once in the Supabase SQL editor. The service role key is only used server-side.
 - **Local:** with no Supabase env vars, data is written to `../data/<collection>.json`. This does not persist on Vercel.
+- Set `STORE_BACKEND=json` to force local files even when Supabase vars are present (handy for local testing).
 
 ## Learn More
 

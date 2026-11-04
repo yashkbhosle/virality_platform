@@ -25,7 +25,7 @@ Return ONLY this JSON:
 { "focused": boolean, "reason": string (one short sentence), "offTopic": string[] (exact pillar text of the ones that don't fit) }`;
 
   try {
-    const raw = await geminiJSON<{ focused?: unknown; reason?: unknown; offTopic?: unknown }>({ prompt, temperature: 0.2 });
+    const raw = await geminiJSON<{ focused?: unknown; reason?: unknown; offTopic?: unknown }>({ prompt, temperature: 0.2, thinking: "minimal" });
     const offTopic = Array.isArray(raw.offTopic)
       ? raw.offTopic.filter((t): t is string => typeof t === "string" && topics.includes(t))
       : [];

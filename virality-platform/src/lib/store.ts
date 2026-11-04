@@ -148,17 +148,19 @@ class JsonFileStore implements Store {
 
 let cached: Store | null = null;
 
-export function getStore(): Store {
-  if (cached) return cached;
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  cached =
-    url && key
-      ? new SupabaseStore(createClient(url, key, { auth: { persistSession: false } }))
-      : new JsonFileStore();
-  return cached;
+/** STORE_BACKEND=json forces local files even when Supabase env vars are present. */
+export function storeBackend(): "supabase" | "json" {
+  if (process.env.STORE_BACKEND?.trim().toLowerCase() === "json") return "json";
+  return process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY ? "supabase" : "json";
 }
 
-export function storeBackend(): "supabase" | "json" {
-  return process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY ? "supabase" : "json";
+export function getStore(): Store {
+  if (cached) return cached;
+  cached =
+    storeBackend() === "supabase"
+      ? new SupabaseStore(
+          createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
+        )
+      : new JsonFileStore();
+  return cached;
 }
