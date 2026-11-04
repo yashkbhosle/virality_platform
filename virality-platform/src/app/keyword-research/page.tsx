@@ -12,6 +12,7 @@ import { VERDICT_LABEL, type ViralityMetrics, type ViralityVerdict } from "@/lib
 import { AnalysisPanel, type TranscriptData } from "@/components/analysis-panel";
 import { trackCreator } from "@/lib/tracked-creators-client";
 import { useActivePersonaId } from "@/lib/active-persona";
+import { saveLastSearch, saveRecentAnalysis } from "@/lib/recent-analyses";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 function fmt(n: number) {
@@ -324,6 +325,16 @@ export default function KeywordResearchPage() {
     }
   };
 
+  // Remember the top organic outliers so the Script Writer can draw hooks from them.
+  useEffect(() => {
+    if (!videos.length && !igReels.length) return;
+    saveLastSearch(keyword, [
+      ...videos.map(v => ({ title: v.title, creator: v.channelTitle, views: v.views, url: v.url, score: v.metrics?.viralityScore ?? 0, paid: !!v.metrics?.likelyPaid })),
+      ...igReels.map(r => ({ title: r.caption.slice(0, 120), creator: "@" + r.ownerUsername, views: r.plays, url: r.url, score: r.metrics?.viralityScore ?? 0, paid: !!r.metrics?.likelyPaid })),
+    ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when results change, not on every keystroke
+  }, [videos, igReels]);
+
   const fetchTranscript = async (video: Video) => {
     if (transcriptData[video.id]) {
       setExpandedTranscript(expandedTranscript === video.id ? null : video.id);
@@ -341,6 +352,7 @@ export default function KeywordResearchPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.error) throw new Error(data.error);
       setTranscriptData(prev => ({ ...prev, [video.id]: data }));
+      saveRecentAnalysis({ url: video.url, title: video.title, creator: video.channelTitle, views: video.views, platform: "youtube", analysis: data.analysis });
       setExpandedTranscript(video.id);
     } catch (e: unknown) { alert((e instanceof Error && e.message) || "Couldn't analyze this video right now. Please try again."); }
     finally { setTranscriptLoading(null); }
@@ -360,6 +372,7 @@ export default function KeywordResearchPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.error) throw new Error(data.error);
       setIgAnalysisData(prev => ({ ...prev, [reel.id]: data }));
+      saveRecentAnalysis({ url: reel.url, title: reel.caption.slice(0, 120) || `Reel by @${reel.ownerUsername}`, creator: "@" + reel.ownerUsername, views: reel.plays, platform: "instagram", analysis: data.analysis });
       setIgExpanded(reel.id);
     } catch (e: unknown) { alert((e instanceof Error && e.message) || "Couldn't analyze this reel right now. Please try again."); }
     finally { setIgAnalysisLoading(null); }

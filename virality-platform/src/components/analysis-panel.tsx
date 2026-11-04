@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
-  AlertTriangle, BookmarkPlus, Check, CheckCircle, Clapperboard, Copy, Download,
+  AlertTriangle, BookmarkPlus, Check, CheckCircle, Clapperboard, Copy, Download, FileText,
   Loader2, MessageCircle, Repeat, Sparkles, Target,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -244,6 +245,16 @@ export function AnalysisPanel({ data, source, onDownload }: { data: TranscriptDa
   const a = data.analysis;
   return (
     <div className="border-t border-white/[0.06] p-5 space-y-4">
+      {source && (
+        <div className="flex justify-end">
+          <Link
+            href={`/script-writer?videoUrl=${encodeURIComponent(source.url)}`}
+            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-red-500 to-orange-500 px-3.5 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+          >
+            <FileText className="h-3 w-3" /> Write a script from this video
+          </Link>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {[
           { label: "Hook Type", val: a.hookType, color: "text-orange-600 dark:text-orange-300" },

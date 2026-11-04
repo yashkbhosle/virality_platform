@@ -56,7 +56,8 @@ The script must:
     const clean = text.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(clean);
     return NextResponse.json(parsed);
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err) {
+    console.error("[script] failed", err);
+    return NextResponse.json({ error: "Couldn't write the script right now. Please try again." }, { status: 502 });
   }
 }
