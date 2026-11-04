@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { APIFY_CACHE_TTL, withApifyCache } from "@/lib/apify-cache";
+import { APIFY_CACHE_TTL, wantsFresh, withApifyCache } from "@/lib/apify-cache";
 import { buildViralAnalysisPrompt, normalizeExtras, type ViralAnalysis } from "@/lib/analysis-prompt";
 import { geminiJSON } from "@/lib/gemini-json";
+import { instagramAnalysisKey, withAnalysisCache } from "@/lib/analysis-cache";
 import type { ViralityMetrics } from "@/lib/virality";
 
 export const maxDuration = 120;
@@ -54,20 +55,27 @@ async function analyzeWithGemini(params: {
 }
 
 export async function POST(req: NextRequest) {
-  const { url, caption, plays = 0, likes = 0, comments = 0, username, metrics = null } = await req.json();
+  const body = await req.json();
+  const { url, caption, plays = 0, likes = 0, comments = 0, username, metrics = null } = body;
+  if (!url) return NextResponse.json({ error: "Reel link missing." }, { status: 400 });
 
   try {
-    const transcript = await fetchReelTranscript(url);
-    const analysis = await analyzeWithGemini({
-      caption: caption || "",
-      plays: Number(plays) || 0,
-      likes: Number(likes) || 0,
-      comments: Number(comments) || 0,
-      username: username || "",
-      transcript,
-      metrics,
+    // A reel's content never changes, so a saved analysis is reused (free). Re-analyze sends fresh: true.
+    // The transcript keeps its own 30-day Apify cache, so a re-analyze only pays for Gemini.
+    const { result, savedAt, fromCache } = await withAnalysisCache(instagramAnalysisKey(url), { fresh: wantsFresh(body) }, async () => {
+      const transcript = await fetchReelTranscript(url);
+      const analysis = await analyzeWithGemini({
+        caption: caption || "",
+        plays: Number(plays) || 0,
+        likes: Number(likes) || 0,
+        comments: Number(comments) || 0,
+        username: username || "",
+        transcript,
+        metrics,
+      });
+      return { transcript, analysis };
     });
-    return NextResponse.json({ transcript, analysis });
+    return NextResponse.json({ ...result, savedAt, fromCache });
   } catch (err) {
     console.error("[ig-analyze] analysis failed", err);
     return NextResponse.json({ error: "Couldn't analyze this reel right now. Please try again in a minute." }, { status: 502 });
