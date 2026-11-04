@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Search, Users, Play, Youtube, Loader2, BarChart2, BookOpen,
   Download, Instagram, Heart, X, CheckCircle, ExternalLink,
@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { VERDICT_LABEL, type ViralityMetrics, type ViralityVerdict } from "@/lib/virality";
 import type { ViralAnalysis, FrameworkScore } from "@/lib/analysis-prompt";
+import { trackCreator } from "@/lib/tracked-creators-client";
+import { useActivePersonaId } from "@/lib/active-persona";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 function fmt(n: number) {
@@ -38,7 +40,6 @@ function ytEmbedId(url: string): string | null {
   const m = url.match(/(?:shorts\/|watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
   return m ? m[1] : null;
 }
-const WL_KEY = "virality_watchlist";
 
 // ── Types ─────────────────────────────────────────────────────────────
 interface Video {
@@ -323,14 +324,12 @@ function SectionHeader({ icon, title, accent, count, loading, label }: {
 }
 
 // ── Add-to-watchlist mini toast ───────────────────────────────────────
+// Watchlist entries are stored server-side via /api/tracked-creators.
 function useWatchlist() {
-  const add = (handle: string, label: string, platform: "youtube" | "instagram") => {
+  const [activePersonaId] = useActivePersonaId();
+  const add = async (handle: string, label: string, platform: "youtube" | "instagram") => {
     try {
-      const saved = localStorage.getItem(WL_KEY);
-      const entries: any[] = saved ? JSON.parse(saved) : [];
-      if (entries.some(e => e.handle === handle && e.platform === platform)) return false;
-      entries.push({ id: Date.now().toString(), handle, label, platform, addedAt: new Date().toISOString() });
-      localStorage.setItem(WL_KEY, JSON.stringify(entries));
+      await trackCreator({ platform, handle, name: label, personaId: activePersonaId ?? undefined });
       return true;
     } catch { return false; }
   };
@@ -372,10 +371,31 @@ export default function KeywordResearchPage() {
   const { add: addToWatchlist } = useWatchlist();
   const [wlAdded, setWlAdded] = useState<Set<string>>(new Set());
 
-  const handleAddWatchlist = (handle: string, label: string, pl: "youtube" | "instagram") => {
-    const added = addToWatchlist(handle, label, pl);
+  const handleAddWatchlist = async (handle: string, label: string, pl: "youtube" | "instagram") => {
+    const added = await addToWatchlist(handle, label, pl);
     if (added) setWlAdded(prev => new Set(prev).add(`${pl}:${handle}`));
   };
+
+  // Deep link from Discover Creators: /keyword-research?channel=<channelId>&name=<title>
+  // loads that channel's top Shorts into the results.
+  const [channelView, setChannelView] = useState<string | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const channel = params.get("channel");
+    if (!channel) return;
+    const name = params.get("name") || channel;
+    setChannelView(name);
+    setKeyword(name);
+    setPlatform("youtube");
+    setSearched(true);
+    setLoading(true);
+    setIgLoading(false);
+    fetch(`/api/youtube?mode=channel&q=${encodeURIComponent(channel)}&max=50&period=all`)
+      .then(r => r.json())
+      .then(d => setVideos(d.videos || []))
+      .catch(() => setVideos([]))
+      .finally(() => setLoading(false));
+  }, []);
 
   // Derive top IG creators
   const igCreators = useMemo(() => {
@@ -713,6 +733,15 @@ export default function KeywordResearchPage() {
       {/* ── Results ── */}
       {searched && (
         <div className="space-y-12">
+          {channelView && (
+            <div className="glass rounded-2xl p-4 flex items-center justify-between gap-3">
+              <p className="text-sm">
+                Top Shorts from <span className="font-semibold">{channelView}</span>
+                <span className="text-muted-foreground">, ranked by virality</span>
+              </p>
+              <a href="/keyword-research" className="text-xs text-muted-foreground hover:text-foreground underline">Clear</a>
+            </div>
+          )}
 
           {/* ══ YOUTUBE SECTION ══ */}
           {showYT && (
