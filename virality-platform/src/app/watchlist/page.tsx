@@ -15,6 +15,9 @@ import {
 import { Label } from "@/components/ui/label";
 import Link from "next/link";
 import type { Creator } from "@/lib/types";
+import { formatCount, tierLabel, type SizeTier, type TrackedCreator } from "@/lib/creators-shared";
+import { listTracked, migrateLegacyWatchlist, trackCreator, untrackCreator } from "@/lib/tracked-creators-client";
+import { usePersonas } from "@/lib/use-personas";
 
 function fmt(n: number) {
   if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1) + "B";
@@ -26,6 +29,13 @@ function fmt(n: number) {
 interface WatchlistEntry {
   id: string; handle: string; label: string;
   platform: "youtube" | "instagram"; addedAt: string;
+  followers?: number; tier?: SizeTier | null; personaId?: string; thumbnail?: string; url?: string;
+}
+function toWatchlistEntry(c: TrackedCreator): WatchlistEntry {
+  return {
+    id: c.id, handle: c.handle, label: c.name, platform: c.platform, addedAt: c.addedAt,
+    followers: c.followers, tier: c.tier, personaId: c.personaId, thumbnail: c.thumbnail, url: c.url,
+  };
 }
 interface ChannelStats {
   handle: string; videos: any[]; loading: boolean; error?: string;
@@ -38,7 +48,6 @@ interface TranscriptData {
     contentFormat: string; hookType: string; cta: string;
   };
 }
-const WL_KEY = "virality_watchlist";
 
 // ── Analysis panel ────────────────────────────────────────────────────
 function AnalysisPanel({ data, onDownload }: { data: TranscriptData; onDownload: () => void }) {
@@ -167,37 +176,36 @@ function YoutubeTab() {
   const [filterSort, setFilterSort] = useState("views");
   const [filterTopN, setFilterTopN] = useState(20);
 
-  useEffect(() => {
-    const saved = localStorage.getItem(WL_KEY);
-    if (saved) {
-      const all: WatchlistEntry[] = JSON.parse(saved);
-      setEntries(all.filter(e => e.platform === "youtube" || !e.platform));
-    }
-  }, []);
+  const [listError, setListError] = useState<string | null>(null);
+  const { names: personaNames, activeId: activePersonaId } = usePersonas();
 
-  const save = (newEntries: WatchlistEntry[]) => {
-    const saved = localStorage.getItem(WL_KEY);
-    const all: WatchlistEntry[] = saved ? JSON.parse(saved) : [];
-    const igEntries = all.filter(e => e.platform === "instagram");
-    setEntries(newEntries);
-    localStorage.setItem(WL_KEY, JSON.stringify([...igEntries, ...newEntries]));
-  };
+  // Tracked creators live in /api/tracked-creators (persisted store).
+  // Old localStorage entries are imported once by migrateLegacyWatchlist().
+  const loadEntries = () =>
+    migrateLegacyWatchlist()
+      .then(() => listTracked("youtube"))
+      .then((list) => { setEntries(list.map(toWatchlistEntry)); setListError(null); })
+      .catch((e: unknown) => setListError(e instanceof Error ? e.message : "Couldn't load your watchlist."));
+  useEffect(() => { loadEntries(); }, []);
 
-  const addEntry = () => {
+  const addEntry = async () => {
     if (!form.handle.trim()) return;
-    const newEntry: WatchlistEntry = {
-      id: Date.now().toString(),
-      handle: form.handle.trim().replace("@", ""),
-      label: form.label || form.handle,
-      platform: "youtube",
-      addedAt: new Date().toISOString(),
-    };
-    save([...entries, newEntry]);
-    setForm({ handle: "", label: "" });
-    setShowing(false);
+    const handle = form.handle.trim().replace("@", "");
+    try {
+      const saved = await trackCreator({ platform: "youtube", handle, name: form.label || handle, personaId: activePersonaId ?? undefined });
+      setEntries(prev => [toWatchlistEntry(saved), ...prev.filter(e => e.id !== saved.id)]);
+      setForm({ handle: "", label: "" });
+      setShowing(false);
+    } catch (e: unknown) {
+      setListError(e instanceof Error ? e.message : "Couldn't add this channel.");
+    }
   };
 
-  const removeEntry = (id: string) => save(entries.filter(e => e.id !== id));
+  const removeEntry = async (id: string) => {
+    const prev = entries;
+    setEntries(entries.filter(e => e.id !== id));
+    try { await untrackCreator(id); } catch { setEntries(prev); setListError("Couldn't remove this channel. Please try again."); }
+  };
 
   const fetchChannelVideos = async (entry: WatchlistEntry, period = filterPeriod, topN = filterTopN) => {
     setChannelStats(prev => ({ ...prev, [entry.id]: { handle: entry.handle, videos: [], loading: true } }));
@@ -402,12 +410,23 @@ function YoutubeTab() {
         </div>
       )}
 
+      {listError && (
+        <div className="glass rounded-2xl p-4 flex items-center justify-between gap-3 text-sm">
+          <span className="text-rose-600 dark:text-rose-300">{listError}</span>
+          <Button variant="ghost" size="sm" onClick={loadEntries} className="rounded-xl text-xs h-8 gap-1.5">
+            <RefreshCw className="h-3 w-3" /> Retry
+          </Button>
+        </div>
+      )}
+
       {entries.length === 0 ? (
         <div className="glass rounded-2xl p-8 sm:p-16 text-center">
           <Youtube className="mx-auto h-12 w-12 text-muted-foreground/20 mb-4" />
           <h3 className="font-semibold text-lg">No channels yet</h3>
           <p className="text-sm text-muted-foreground mt-1">Add competitor channels to track their top Shorts</p>
-          <p className="text-xs text-muted-foreground/60 mt-1">Channels found in Keyword Research can be added directly with the + Add to Watchlist button</p>
+          <p className="text-xs text-muted-foreground/60 mt-1">
+            Or <Link href="/discover" className="underline">discover creators in your niche</Link> and click Track.
+          </p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -426,12 +445,23 @@ function YoutubeTab() {
                     <button onClick={() => toggleCompetitor(entry.handle)}
                       className={`h-5 w-5 rounded-md border-2 shrink-0 transition-all ${isSelected ? "bg-purple-500 border-purple-500" : "border-white/[0.2]"}`}
                     />
-                    <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-red-500/20 to-orange-500/20 flex items-center justify-center shrink-0">
-                      <Youtube className="h-5 w-5 text-red-400" />
-                    </div>
+                    {entry.thumbnail ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={entry.thumbnail} alt="" className="h-10 w-10 rounded-xl object-cover shrink-0" />
+                    ) : (
+                      <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-red-500/20 to-orange-500/20 flex items-center justify-center shrink-0">
+                        <Youtube className="h-5 w-5 text-red-400" />
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm">@{entry.handle}</p>
-                      {entry.label !== entry.handle && <p className="text-xs text-muted-foreground">{entry.label}</p>}
+                      <p className="font-semibold text-sm truncate">{entry.handle.startsWith("UC") ? entry.label : `@${entry.handle}`}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {[
+                          !entry.handle.startsWith("UC") && entry.label !== entry.handle ? entry.label : null,
+                          entry.followers ? `${formatCount(entry.followers)} subs · ${tierLabel(entry.tier)}` : null,
+                          entry.personaId && personaNames[entry.personaId] ? `for ${personaNames[entry.personaId]}` : null,
+                        ].filter(Boolean).join(" · ")}
+                      </p>
                     </div>
                   </div>
                   <div className="flex gap-2 flex-wrap">
@@ -525,6 +555,66 @@ function YoutubeTab() {
 }
 
 // ── Instagram Competitors tab ─────────────────────────────────────────
+// Instagram creators tracked from Discover / Keyword Research (persisted store).
+function TrackedInstagramList() {
+  const [items, setItems] = useState<TrackedCreator[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const { names } = usePersonas();
+
+  const load = () =>
+    migrateLegacyWatchlist()
+      .then(() => listTracked("instagram"))
+      .then((list) => { setItems(list); setError(null); })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Couldn't load tracked creators."));
+  useEffect(() => { load(); }, []);
+
+  const remove = async (id: string) => {
+    const prev = items;
+    setItems((items ?? []).filter((c) => c.id !== id));
+    try { await untrackCreator(id); } catch { setItems(prev); setError("Couldn't remove this creator. Please try again."); }
+  };
+
+  if (error) {
+    return (
+      <div className="glass rounded-2xl p-4 flex items-center justify-between gap-3 text-sm">
+        <span className="text-rose-600 dark:text-rose-300">{error}</span>
+        <Button variant="ghost" size="sm" onClick={load} className="rounded-xl text-xs h-8 gap-1.5"><RefreshCw className="h-3 w-3" /> Retry</Button>
+      </div>
+    );
+  }
+  if (!items || items.length === 0) return null;
+
+  return (
+    <div className="glass rounded-2xl p-4 space-y-3">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tracked creators ({items.length})</p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {items.map((c) => (
+          <div key={c.id} className="flex items-center gap-3 rounded-xl border border-border p-3">
+            {c.thumbnail ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={`/api/proxy-image?url=${encodeURIComponent(c.thumbnail)}`} alt="" className="h-9 w-9 rounded-full object-cover" />
+            ) : (
+              <div className="h-9 w-9 rounded-full bg-pink-500/15 flex items-center justify-center"><Instagram className="h-4 w-4 text-pink-500" /></div>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold truncate">@{c.handle}</p>
+              <p className="text-[11px] text-muted-foreground truncate">
+                {c.followers ? `${formatCount(c.followers)} followers · ${tierLabel(c.tier)}` : c.name}
+                {c.personaId && names[c.personaId] && ` · for ${names[c.personaId]}`}
+              </p>
+            </div>
+            <a href={c.url || `https://www.instagram.com/${c.handle}/reels/`} target="_blank" rel="noreferrer"
+              className="text-muted-foreground hover:text-foreground" title="Open reels"><ExternalLink className="h-3.5 w-3.5" /></a>
+            <button onClick={() => remove(c.id)} className="text-muted-foreground hover:text-rose-600 dark:hover:text-rose-300" title="Stop tracking">
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function InstagramTab() {
   const [creators, setCreators] = useState<Creator[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -674,6 +764,8 @@ function InstagramTab() {
 
   return (
     <div className="space-y-5">
+      <TrackedInstagramList />
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <p className="text-sm text-muted-foreground">Track Instagram competitor accounts and load their top Reels by views</p>

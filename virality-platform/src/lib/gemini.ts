@@ -1,5 +1,6 @@
+import { GEMINI_GENERATE_URL } from "@/lib/gemini-model";
 const GEMINI_UPLOAD_URL = "https://generativelanguage.googleapis.com/upload/v1beta/files";
-const GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+
 
 function getApiKey(): string {
   const key = process.env.GEMINI_API_KEY;

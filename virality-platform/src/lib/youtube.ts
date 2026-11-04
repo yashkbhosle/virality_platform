@@ -1,5 +1,7 @@
 // YouTube Data API v3 - All-time most viewed videos
 
+import { computeViralityMetrics, isLikelyAdDrivenChannel, type ViralityMetrics } from "./virality";
+
 const YT_BASE = "https://www.googleapis.com/youtube/v3";
 
 function getKey(): string {
@@ -21,6 +23,10 @@ export interface YTVideo {
   duration: string;
   description: string;
   url: string;
+  /** Channel context + virality metrics (populated by keyword search) */
+  channelSubscribers?: number;
+  channelAvgViews?: number;
+  metrics?: ViralityMetrics;
 }
 
 export interface YTChannel {
@@ -32,26 +38,100 @@ export interface YTChannel {
   viewCount: number;
   description: string;
   url: string;
+  /** Huge total views vs. a tiny audience — usually ad spend, not organic reach */
+  likelyAdDriven?: boolean;
+  /** Average views per video */
+  avgViewsPerVideo?: number;
 }
 
 // Search top Shorts by keyword (≤ 180s, sorted by view count)
 export async function searchTopVideos(keyword: string, maxResults = 20, period = "all"): Promise<YTVideo[]> {
   const key = getKey();
 
-  const fetchCount = Math.min(maxResults * 2, 50);
+  // Pull a wider candidate pool (up to 2 pages) so that after paid ads are
+  // filtered out on the client there are still enough organic results.
+  const target = Math.min(Math.max(maxResults * 2, 50), 200);
   const afterParam = period !== "all" ? `&publishedAfter=${encodeURIComponent(periodToISO(period))}` : "";
-  const searchRes = await fetch(
-    `${YT_BASE}/search?part=id,snippet&q=${encodeURIComponent(keyword)}&type=video&order=viewCount&videoDuration=short&maxResults=${fetchCount}${afterParam}&key=${key}`
-  );
-  if (!searchRes.ok) throw new Error(`YouTube search error: ${await searchRes.text()}`);
-  const searchData = await searchRes.json();
 
-  const videoIds = searchData.items?.map((i: any) => i.id.videoId).filter(Boolean) || [];
-  if (videoIds.length === 0) return [];
+  const videoIds: string[] = [];
+  let pageToken: string | undefined;
+  for (let p = 0; p < 4 && videoIds.length < target; p++) {
+    const pageParam = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "";
+    const searchRes = await fetch(
+      `${YT_BASE}/search?part=id&q=${encodeURIComponent(keyword)}&type=video&order=viewCount&videoDuration=short&maxResults=50${afterParam}${pageParam}&key=${key}`
+    );
+    if (!searchRes.ok) {
+      if (p === 0) throw new Error(`YouTube search error: ${await searchRes.text()}`);
+      break;
+    }
+    const searchData = await searchRes.json();
+    videoIds.push(...(searchData.items?.map((i: any) => i.id?.videoId).filter(Boolean) ?? []));
+    pageToken = searchData.nextPageToken;
+    if (!pageToken) break;
+  }
 
-  const videos = await getVideoDetails(videoIds);
+  const unique = [...new Set(videoIds)].slice(0, target);
+  if (unique.length === 0) return [];
+
+  const videos = (await Promise.all(
+    Array.from({ length: Math.ceil(unique.length / 50) }, (_, i) =>
+      getVideoDetails(unique.slice(i * 50, (i + 1) * 50))
+    )
+  )).flat();
+
   // v.duration is "M:SS" format — use durationStringToSeconds not parseDurationSeconds
-  return videos.filter(v => durationStringToSeconds(v.duration) <= 180).slice(0, maxResults);
+  const shorts = videos.filter(v => durationStringToSeconds(v.duration) <= 180);
+  const withMetrics = await attachViralityMetrics(shorts);
+  // Return up to 2× the requested count so the UI can hide likely ads and still fill the list
+  return withMetrics.slice(0, maxResults * 2);
+}
+
+// Enrich videos with channel context (subs, avg views/video) and virality metrics.
+export async function attachViralityMetrics(videos: YTVideo[]): Promise<YTVideo[]> {
+  if (videos.length === 0) return videos;
+  const stats = await getChannelStats([...new Set(videos.map(v => v.channelId).filter(Boolean))]);
+  return videos.map(v => {
+    const ch = stats[v.channelId];
+    const channelAvgViews = ch && ch.videoCount > 0 ? Math.round(ch.viewCount / ch.videoCount) : undefined;
+    return {
+      ...v,
+      channelSubscribers: ch?.subscribers,
+      channelAvgViews,
+      metrics: computeViralityMetrics({
+        views: v.views,
+        likes: v.likes,
+        comments: v.comments,
+        followers: ch?.subscribers ?? null,
+        baselineViews: channelAvgViews ?? null,
+      }),
+    };
+  });
+}
+
+// Batch channel statistics lookup (50 ids per request)
+async function getChannelStats(
+  channelIds: string[]
+): Promise<Record<string, { subscribers: number; viewCount: number; videoCount: number }>> {
+  const key = getKey();
+  const out: Record<string, { subscribers: number; viewCount: number; videoCount: number }> = {};
+  for (let i = 0; i < channelIds.length; i += 50) {
+    const batch = channelIds.slice(i, i + 50);
+    try {
+      const res = await fetch(`${YT_BASE}/channels?part=statistics&id=${batch.join(",")}&key=${key}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      for (const item of data.items || []) {
+        out[item.id] = {
+          subscribers: parseInt(item.statistics?.subscriberCount || "0"),
+          viewCount: parseInt(item.statistics?.viewCount || "0"),
+          videoCount: parseInt(item.statistics?.videoCount || "0"),
+        };
+      }
+    } catch {
+      // channel stats are an enrichment — never fail the search because of them
+    }
+  }
+  return out;
 }
 
 // Get channel's top Shorts sorted by real view count.
@@ -189,7 +269,15 @@ export async function searchTopChannels(keyword: string, maxResults = 10): Promi
       description: item.snippet?.description?.slice(0, 200) || "",
       url: `https://www.youtube.com/channel/${item.id}`,
     }))
-    .sort((a: YTChannel, b: YTChannel) => b.subscribers - a.subscribers);
+    .map((ch: YTChannel) => ({
+      ...ch,
+      likelyAdDriven: isLikelyAdDrivenChannel(ch.subscribers, ch.viewCount),
+      avgViewsPerVideo: ch.videoCount > 0 ? Math.round(ch.viewCount / ch.videoCount) : 0,
+    }))
+    // Organic channels first, then by audience size
+    .sort((a: YTChannel, b: YTChannel) =>
+      Number(a.likelyAdDriven) - Number(b.likelyAdDriven) || b.subscribers - a.subscribers
+    );
 }
 
 // Parses ISO 8601 duration (PT1M30S) → seconds — used inside getVideoDetails

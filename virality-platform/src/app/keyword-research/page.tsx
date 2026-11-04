@@ -1,12 +1,18 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Search, Users, Play, Youtube, Loader2, BarChart2, BookOpen,
   Download, Instagram, Heart, X, CheckCircle, ExternalLink,
+  AlertTriangle, TrendingUp, Flame, EyeOff, Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { VERDICT_LABEL, type ViralityMetrics, type ViralityVerdict } from "@/lib/virality";
+import { AnalysisPanel, type TranscriptData } from "@/components/analysis-panel";
+import { trackCreator } from "@/lib/tracked-creators-client";
+import { useActivePersonaId } from "@/lib/active-persona";
+import { saveLastSearch, saveRecentAnalysis } from "@/lib/recent-analyses";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 function fmt(n: number) {
@@ -35,31 +41,80 @@ function ytEmbedId(url: string): string | null {
   const m = url.match(/(?:shorts\/|watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
   return m ? m[1] : null;
 }
-const WL_KEY = "virality_watchlist";
 
 // ── Types ─────────────────────────────────────────────────────────────
 interface Video {
   id: string; title: string; channelTitle: string; channelId: string;
   thumbnail: string; views: number; likes: number; comments: number;
   publishedAt: string; duration: string; url: string;
+  channelSubscribers?: number; channelAvgViews?: number;
+  metrics?: ViralityMetrics;
 }
 interface Channel {
   id: string; title: string; thumbnail: string; subscribers: number;
   videoCount: number; viewCount: number; description: string; url: string;
+  likelyAdDriven?: boolean; avgViewsPerVideo?: number;
 }
 interface IGReel {
   id: string; url: string; thumbnail: string; caption: string;
   ownerUsername: string; ownerProfilePic: string;
   plays: number; likes: number; comments: number; timestamp: string;
+  metrics?: ViralityMetrics | null;
 }
-interface TranscriptData {
-  transcript: string;
-  analysis: {
-    hook: string; format: string; whyViral: string; keyTopics: string[];
-    contentFormat: string; hookType: string; cta: string;
-  };
+type SortKey = "virality" | "engagement" | "outlier" | "views";
+
+// ── Ranking helpers ───────────────────────────────────────────────────
+function sortValue(m: ViralityMetrics | null | undefined, views: number, key: SortKey): number {
+  if (key === "views") return views;
+  if (!m) return -1; // unknown metrics sink to the bottom
+  if (key === "engagement") return m.engagementRate;
+  if (key === "outlier") return m.outlierScore ?? -1;
+  return m.viralityScore;
+}
+function rankItems<T>(items: T[], get: (t: T) => { m: ViralityMetrics | null | undefined; views: number }, key: SortKey, hideAds: boolean) {
+  const visible = hideAds ? items.filter(t => !get(t).m?.likelyPaid) : items;
+  const hidden = items.length - visible.length;
+  const sorted = [...visible].sort((a, b) => {
+    const A = get(a), B = get(b);
+    return sortValue(B.m, B.views, key) - sortValue(A.m, A.views, key) || B.views - A.views;
+  });
+  return { sorted, hidden };
 }
 
+// ── Metric badges ─────────────────────────────────────────────────────
+const VERDICT_STYLE: Record<ViralityVerdict, string> = {
+  "organic-viral": "bg-green-500/15 text-green-400 border-green-500/30",
+  strong: "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  average: "bg-white/[0.05] text-muted-foreground border-white/[0.1]",
+  "likely-paid": "bg-red-500/15 text-red-400 border-red-500/30",
+};
+function engagementColor(rate: number) {
+  if (rate >= 4) return "text-green-400";
+  if (rate >= 1.5) return "text-blue-400";
+  if (rate >= 0.3) return "text-yellow-400";
+  return "text-red-400";
+}
+function MetricBadges({ m }: { m?: ViralityMetrics | null }) {
+  if (!m) return <span className="text-[10px] text-muted-foreground/60">Engagement unknown (no view count)</span>;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className={`inline-flex items-center gap-1 text-[10px] font-semibold border rounded-full px-2 py-0.5 ${VERDICT_STYLE[m.verdict]}`}
+        title={m.paidReason || `Virality score ${m.viralityScore}/100`}>
+        {m.verdict === "likely-paid" ? <AlertTriangle className="h-2.5 w-2.5" /> : <Flame className="h-2.5 w-2.5" />}
+        {VERDICT_LABEL[m.verdict]} · {m.viralityScore}
+      </span>
+      <span className={`text-[10px] font-semibold ${engagementColor(m.engagementRate)}`} title="(likes + comments) ÷ views">
+        {m.engagementRate}% engagement
+      </span>
+      {m.outlierScore !== null && (
+        <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold ${m.outlierScore >= 5 ? "text-orange-400" : "text-muted-foreground"}`}
+          title="Views ÷ the channel's average views per video">
+          <TrendingUp className="h-2.5 w-2.5" /> {m.outlierScore}× channel avg
+        </span>
+      )}
+    </div>
+  );
+}
 // ── In-app video modal ────────────────────────────────────────────────
 function VideoModal({ video, onClose }: { video: Video; onClose: () => void }) {
   const embedId = ytEmbedId(video.url);
@@ -102,77 +157,6 @@ function VideoModal({ video, onClose }: { video: Video; onClose: () => void }) {
   );
 }
 
-// ── Analysis panel ────────────────────────────────────────────────────
-function AnalysisPanel({ data, onDownload }: { data: TranscriptData; onDownload: () => void }) {
-  const [showFullTranscript, setShowFullTranscript] = useState(false);
-  return (
-    <div className="border-t border-white/[0.06] p-5 space-y-4">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {[
-          { label: "Hook Type", val: data.analysis.hookType, color: "text-orange-400" },
-          { label: "Format",    val: data.analysis.format,   color: "text-blue-400"   },
-          { label: "CTA",       val: data.analysis.cta,      color: "text-green-400"  },
-          { label: "Topics",    val: data.analysis.keyTopics?.slice(0, 2).join(", "), color: "text-purple-400" },
-        ].map(({ label, val, color }) => (
-          <div key={label} className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.05]">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{label}</p>
-            <p className={`text-xs font-semibold ${color} leading-tight`}>{val || "—"}</p>
-          </div>
-        ))}
-      </div>
-      <div className="space-y-2">
-        <div className="bg-orange-500/5 border border-orange-500/20 rounded-xl p-4">
-          <p className="text-[10px] text-orange-400 font-semibold uppercase tracking-wider mb-2">🎣 HOOK</p>
-          <p className="text-sm leading-relaxed">{data.analysis.hook}</p>
-        </div>
-        <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4">
-          <p className="text-[10px] text-blue-400 font-semibold uppercase tracking-wider mb-2">🔥 WHY VIRAL</p>
-          <p className="text-sm leading-relaxed">{data.analysis.whyViral}</p>
-        </div>
-        {data.analysis.contentFormat && (
-          <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-4">
-            <p className="text-[10px] text-purple-400 font-semibold uppercase tracking-wider mb-2">📐 CONTENT BREAKDOWN</p>
-            <p className="text-sm leading-relaxed">{data.analysis.contentFormat}</p>
-          </div>
-        )}
-        {data.analysis.keyTopics?.length > 0 && (
-          <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
-            <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-2">🏷️ KEY TOPICS</p>
-            <div className="flex flex-wrap gap-1.5">
-              {data.analysis.keyTopics.map((t, i) => (
-                <span key={i} className="text-[11px] bg-white/[0.05] border border-white/[0.08] rounded-full px-2.5 py-0.5">{t}</span>
-              ))}
-            </div>
-          </div>
-        )}
-        {data.transcript ? (
-          <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">📝 TRANSCRIPT</p>
-              <div className="flex gap-2">
-                <button onClick={() => setShowFullTranscript(v => !v)} className="text-[10px] text-blue-400 hover:underline">
-                  {showFullTranscript ? "Show less" : "Show full"}
-                </button>
-                <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-1 text-muted-foreground px-2" onClick={onDownload}>
-                  <Download className="h-2.5 w-2.5" /> Download
-                </Button>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
-              {showFullTranscript ? data.transcript : data.transcript.slice(0, 500) + (data.transcript.length > 500 ? "…" : "")}
-            </p>
-          </div>
-        ) : (
-          <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
-            <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-1">📝 TRANSCRIPT</p>
-            <p className="text-xs text-muted-foreground">No transcript available — analysis based on caption and engagement metrics.</p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── Section header ────────────────────────────────────────────────────
 function SectionHeader({ icon, title, accent, count, loading, label }: {
   icon: React.ReactNode; title: string; accent: string;
@@ -194,14 +178,12 @@ function SectionHeader({ icon, title, accent, count, loading, label }: {
 }
 
 // ── Add-to-watchlist mini toast ───────────────────────────────────────
+// Watchlist entries are stored server-side via /api/tracked-creators.
 function useWatchlist() {
-  const add = (handle: string, label: string, platform: "youtube" | "instagram") => {
+  const [activePersonaId] = useActivePersonaId();
+  const add = async (handle: string, label: string, platform: "youtube" | "instagram") => {
     try {
-      const saved = localStorage.getItem(WL_KEY);
-      const entries: any[] = saved ? JSON.parse(saved) : [];
-      if (entries.some(e => e.handle === handle && e.platform === platform)) return false;
-      entries.push({ id: Date.now().toString(), handle, label, platform, addedAt: new Date().toISOString() });
-      localStorage.setItem(WL_KEY, JSON.stringify(entries));
+      await trackCreator({ platform, handle, name: label, personaId: activePersonaId ?? undefined });
       return true;
     } catch { return false; }
   };
@@ -212,7 +194,10 @@ function useWatchlist() {
 export default function KeywordResearchPage() {
   const [keyword, setKeyword] = useState("");
   const [platform, setPlatform] = useState<"both" | "youtube" | "instagram">("both");
-  const [period, setPeriod] = useState("all");
+  // Default to recent content — older "all time" hits reflect old trends
+  const [period, setPeriod] = useState("6mo");
+  const [sortBy, setSortBy] = useState<SortKey>("virality");
+  const [hideAds, setHideAds] = useState(true);
   const [ytMax, setYtMax] = useState(20);
   const [loading, setLoading] = useState(false);
   const [igLoading, setIgLoading] = useState(false);
@@ -240,10 +225,31 @@ export default function KeywordResearchPage() {
   const { add: addToWatchlist } = useWatchlist();
   const [wlAdded, setWlAdded] = useState<Set<string>>(new Set());
 
-  const handleAddWatchlist = (handle: string, label: string, pl: "youtube" | "instagram") => {
-    const added = addToWatchlist(handle, label, pl);
+  const handleAddWatchlist = async (handle: string, label: string, pl: "youtube" | "instagram") => {
+    const added = await addToWatchlist(handle, label, pl);
     if (added) setWlAdded(prev => new Set(prev).add(`${pl}:${handle}`));
   };
+
+  // Deep link from Discover Creators: /keyword-research?channel=<channelId>&name=<title>
+  // loads that channel's top Shorts into the results.
+  const [channelView, setChannelView] = useState<string | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const channel = params.get("channel");
+    if (!channel) return;
+    const name = params.get("name") || channel;
+    setChannelView(name);
+    setKeyword(name);
+    setPlatform("youtube");
+    setSearched(true);
+    setLoading(true);
+    setIgLoading(false);
+    fetch(`/api/youtube?mode=channel&q=${encodeURIComponent(channel)}&max=50&period=all`)
+      .then(r => r.json())
+      .then(d => setVideos(d.videos || []))
+      .catch(() => setVideos([]))
+      .finally(() => setLoading(false));
+  }, []);
 
   // Derive top IG creators
   const igCreators = useMemo(() => {
@@ -257,6 +263,17 @@ export default function KeywordResearchPage() {
     });
     return Object.values(map).sort((a, b) => (b.totalPlays || b.totalLikes) - (a.totalPlays || a.totalLikes)).slice(0, 8);
   }, [igReels]);
+
+  const ytRanked = useMemo(
+    () => rankItems(videos, v => ({ m: v.metrics, views: v.views }), sortBy, hideAds),
+    [videos, sortBy, hideAds]
+  );
+  const shownVideos = ytRanked.sorted.slice(0, ytMax);
+  const igRanked = useMemo(
+    () => rankItems(igReels, r => ({ m: r.metrics, views: r.plays }), sortBy === "outlier" ? "engagement" : sortBy, hideAds),
+    [igReels, sortBy, hideAds]
+  );
+  const shownReels = igRanked.sorted.slice(0, 20);
 
   const search = async () => {
     if (!keyword.trim()) return;
@@ -298,6 +315,7 @@ export default function KeywordResearchPage() {
             likes: v.likes || 0,
             comments: v.comments || 0,
             timestamp: v.timestamp || "",
+            metrics: v.metrics ?? null,
           })));
         })
         .catch(e => setIgError(String(e)))
@@ -306,6 +324,16 @@ export default function KeywordResearchPage() {
       setIgLoading(false);
     }
   };
+
+  // Remember the top organic outliers so the Script Writer can draw hooks from them.
+  useEffect(() => {
+    if (!videos.length && !igReels.length) return;
+    saveLastSearch(keyword, [
+      ...videos.map(v => ({ title: v.title, creator: v.channelTitle, views: v.views, url: v.url, score: v.metrics?.viralityScore ?? 0, paid: !!v.metrics?.likelyPaid })),
+      ...igReels.map(r => ({ title: r.caption.slice(0, 120), creator: "@" + r.ownerUsername, views: r.plays, url: r.url, score: r.metrics?.viralityScore ?? 0, paid: !!r.metrics?.likelyPaid })),
+    ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when results change, not on every keystroke
+  }, [videos, igReels]);
 
   const fetchTranscript = async (video: Video) => {
     if (transcriptData[video.id]) {
@@ -316,13 +344,17 @@ export default function KeywordResearchPage() {
     try {
       const res = await fetch("/api/transcript", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: video.url, title: video.title }),
+        body: JSON.stringify({
+          url: video.url, title: video.title, channelTitle: video.channelTitle,
+          views: video.views, likes: video.likes, comments: video.comments, metrics: video.metrics ?? null,
+        }),
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error);
       setTranscriptData(prev => ({ ...prev, [video.id]: data }));
+      saveRecentAnalysis({ url: video.url, title: video.title, creator: video.channelTitle, views: video.views, platform: "youtube", analysis: data.analysis });
       setExpandedTranscript(video.id);
-    } catch (e: any) { alert("Transcript error: " + e.message); }
+    } catch (e: unknown) { alert((e instanceof Error && e.message) || "Couldn't analyze this video right now. Please try again."); }
     finally { setTranscriptLoading(null); }
   };
 
@@ -335,33 +367,45 @@ export default function KeywordResearchPage() {
     try {
       const res = await fetch("/api/ig-analyze", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: reel.url, caption: reel.caption, plays: reel.plays, likes: reel.likes, comments: reel.comments, username: reel.ownerUsername }),
+        body: JSON.stringify({ url: reel.url, caption: reel.caption, plays: reel.plays, likes: reel.likes, comments: reel.comments, username: reel.ownerUsername, metrics: reel.metrics ?? null }),
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error);
       setIgAnalysisData(prev => ({ ...prev, [reel.id]: data }));
+      saveRecentAnalysis({ url: reel.url, title: reel.caption.slice(0, 120) || `Reel by @${reel.ownerUsername}`, creator: "@" + reel.ownerUsername, views: reel.plays, platform: "instagram", analysis: data.analysis });
       setIgExpanded(reel.id);
-    } catch (e: any) { alert("Analysis error: " + e.message); }
+    } catch (e: unknown) { alert((e instanceof Error && e.message) || "Couldn't analyze this reel right now. Please try again."); }
     finally { setIgAnalysisLoading(null); }
   };
 
   const downloadCSV = () => {
     const esc = (s: unknown) => `"${String(s ?? "").replace(/"/g, '""').replace(/\n|\r/g, " ")}"`;
-    const cols = ["platform","url","title_or_caption","creator","views_or_plays","likes","comments","date","hook_type","format","why_viral","hook","cta","key_topics","transcript"];
-    const ytRows = videos.map(v => {
-      const td = transcriptData[v.id];
-      return ["YouTube Short", v.url, v.title, v.channelTitle, v.views, v.likes, v.comments, v.publishedAt,
-        td?.analysis?.hookType||"", td?.analysis?.format||"", td?.analysis?.whyViral||"",
-        td?.analysis?.hook||"", td?.analysis?.cta||"", td?.analysis?.keyTopics?.join("; ")||"", td?.transcript||"",
-      ].map(esc).join(",");
-    });
-    const igRows = igReels.map(r => {
-      const td = igAnalysisData[r.id];
-      return ["Instagram Reel", r.url, r.caption, r.ownerUsername, r.plays||r.likes, r.likes, r.comments, r.timestamp,
-        td?.analysis?.hookType||"", td?.analysis?.format||"", td?.analysis?.whyViral||"",
-        td?.analysis?.hook||"", td?.analysis?.cta||"", td?.analysis?.keyTopics?.join("; ")||"", td?.transcript||"",
-      ].map(esc).join(",");
-    });
+    const cols = ["platform","url","title_or_caption","creator","views_or_plays","likes","comments","date",
+      "engagement_rate_pct","outlier_x_channel_avg","virality_score","verdict","likely_paid","paid_reason",
+      "hook_type","format","target_avatar","hook_strength","relevance","non_obvious","absorption","short_distance",
+      "why_viral","hook","cta","key_topics","comment_triggers","replicate","transcript"];
+    const metricCols = (m?: ViralityMetrics | null) => [
+      m?.engagementRate ?? "", m?.outlierScore ?? "", m?.viralityScore ?? "", m ? VERDICT_LABEL[m.verdict] : "",
+      m ? (m.likelyPaid ? "yes" : "no") : "", m?.paidReason ?? "",
+    ];
+    const analysisCols = (td?: TranscriptData) => {
+      const a = td?.analysis;
+      return [
+        a?.hookType||"", a?.format||"", a?.targetAvatar||"", a?.hookStrength?.score ?? "",
+        a?.engagementRules?.relevance?.score ?? "", a?.engagementRules?.nonObvious?.score ?? "",
+        a?.engagementRules?.absorption?.score ?? "", a?.engagementRules?.shortDistance?.score ?? "",
+        a?.whyViral||"", a?.hook||"", a?.cta||"", a?.keyTopics?.join("; ")||"",
+        a?.commentTriggers?.join("; ")||"", a?.replicate?.join(" | ")||"", td?.transcript||"",
+      ];
+    };
+    const ytRows = shownVideos.map(v => [
+      "YouTube Short", v.url, v.title, v.channelTitle, v.views, v.likes, v.comments, v.publishedAt,
+      ...metricCols(v.metrics), ...analysisCols(transcriptData[v.id]),
+    ].map(esc).join(","));
+    const igRows = shownReels.map(r => [
+      "Instagram Reel", r.url, r.caption, r.ownerUsername, r.plays||"", r.likes, r.comments, r.timestamp,
+      ...metricCols(r.metrics), ...analysisCols(igAnalysisData[r.id]),
+    ].map(esc).join(","));
     const csv = [cols.map(c => `"${c}"`).join(","), ...ytRows, ...igRows].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -374,6 +418,7 @@ export default function KeywordResearchPage() {
 
   const igTag = keyword.trim().split(/\s+/)[0].toLowerCase();
   const periodLabel: Record<string, string> = { "14d": "14 days", "30d": "1 month", "6mo": "6 months", "1y": "1 year", "2y": "2 years", "all": "all time" };
+  const sortLabel: Record<SortKey, string> = { virality: "Ranked by virality score", engagement: "Ranked by engagement rate", outlier: "Ranked by outlier score", views: "Ranked by most views" };
   const hasResults = videos.length > 0 || igReels.length > 0;
   const showYT = platform === "both" || platform === "youtube";
   const showIG = platform === "both" || platform === "instagram";
@@ -390,7 +435,7 @@ export default function KeywordResearchPage() {
             Keyword Research
           </h1>
 
-          <p className="mt-1 text-sm text-muted-foreground">Find top-performing Shorts and Reels sorted by most views</p>
+          <p className="mt-1 text-sm text-muted-foreground">Find genuinely viral Shorts and Reels — ranked by engagement, with paid ads filtered out</p>
         </div>
         {hasResults && (
           <Button variant="ghost" size="sm" onClick={downloadCSV} className="rounded-xl glass border-white/[0.08] gap-1.5 text-xs h-9">
@@ -494,8 +539,46 @@ export default function KeywordResearchPage() {
             </>
           )}
 
+        </div>
+
+        {/* Ranking + ad filter */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-muted-foreground">Rank by:</span>
+            {([
+              ["virality", "Virality score"],
+              ["engagement", "Engagement rate"],
+              ["outlier", "Outlier (vs channel avg)"],
+              ["views", "Most views"],
+            ] as const).map(([val, lbl]) => (
+              <button
+                key={val}
+                onClick={() => setSortBy(val)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-all border ${
+                  sortBy === val
+                    ? "bg-gradient-to-r from-red-500 to-orange-500 border-transparent text-white"
+                    : "glass border-white/[0.08] text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {lbl}
+              </button>
+            ))}
+          </div>
+          <div className="h-4 w-px bg-white/[0.08]" />
+          <button
+            onClick={() => setHideAds(v => !v)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all border ${
+              hideAds ? "bg-green-500/15 border-green-500/30 text-green-400" : "glass border-white/[0.08] text-muted-foreground hover:text-foreground"
+            }`}
+            title="Hide videos whose views look like paid ad impressions (very low likes per view)"
+          >
+            {hideAds ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+            {hideAds ? "Hiding likely ads" : "Showing likely ads"}
+          </button>
           {searched && (
-            <span className="ml-auto text-xs text-muted-foreground">Most views · {periodLabel[period]}</span>
+            <span className="ml-auto text-xs text-muted-foreground">
+              {sortLabel[sortBy]} · {periodLabel[period]}
+            </span>
           )}
         </div>
       </div>
@@ -516,6 +599,15 @@ export default function KeywordResearchPage() {
       {/* ── Results ── */}
       {searched && (
         <div className="space-y-12">
+          {channelView && (
+            <div className="glass rounded-2xl p-4 flex items-center justify-between gap-3">
+              <p className="text-sm">
+                Top Shorts from <span className="font-semibold">{channelView}</span>
+                <span className="text-muted-foreground">, ranked by virality</span>
+              </p>
+              <a href="/keyword-research" className="text-xs text-muted-foreground hover:text-foreground underline">Clear</a>
+            </div>
+          )}
 
           {/* ══ YOUTUBE SECTION ══ */}
           {showYT && (
@@ -529,8 +621,8 @@ export default function KeywordResearchPage() {
                 icon={<Youtube className="h-5 w-5 text-white" />}
                 accent="bg-gradient-to-br from-red-500 to-orange-500"
                 title="Top YouTube Shorts"
-                label={`Most viewed Shorts for "${keyword}" · sorted by views`}
-                count={videos.length}
+                label={`Shorts for "${keyword}" · ${sortLabel[sortBy].toLowerCase()}${hideAds && ytRanked.hidden ? ` · ${ytRanked.hidden} likely ad${ytRanked.hidden === 1 ? "" : "s"} hidden` : ""}`}
+                count={shownVideos.length}
                 loading={loading}
               />
 
@@ -543,13 +635,15 @@ export default function KeywordResearchPage() {
                       <p className="text-sm text-muted-foreground">Fetching YouTube Shorts…</p>
                     </div>
                   )}
-                  {!loading && videos.length === 0 && (
+                  {!loading && shownVideos.length === 0 && (
                     <div className="glass rounded-2xl p-10 text-center">
                       <Youtube className="mx-auto h-8 w-8 text-muted-foreground/20 mb-3" />
-                      <p className="text-sm text-muted-foreground">No Shorts found for this keyword.</p>
+                      <p className="text-sm text-muted-foreground">
+                        {videos.length > 0 ? "All results look like paid ads. Toggle \"Showing likely ads\" to see them." : "No Shorts found for this keyword."}
+                      </p>
                     </div>
                   )}
-                  {videos.map((video, i) => (
+                  {shownVideos.map((video, i) => (
                     <div key={video.id} className="group">
                       <div className="glass rounded-2xl overflow-hidden hover:border-white/[0.12] transition-all duration-300">
                         <div className="flex gap-2 sm:gap-4 p-3 sm:p-4">
@@ -577,6 +671,10 @@ export default function KeywordResearchPage() {
                               <span className="text-xs text-muted-foreground">👍 {fmt(video.likes)}</span>
                               <span className="text-xs text-muted-foreground">💬 {fmt(video.comments)}</span>
                             </div>
+                            <MetricBadges m={video.metrics} />
+                            {video.metrics?.likelyPaid && video.metrics.paidReason && (
+                              <p className="text-[10px] text-red-400/80">{video.metrics.paidReason}</p>
+                            )}
                           </div>
                           <div className="shrink-0 flex items-center">
                             <Button
@@ -593,6 +691,7 @@ export default function KeywordResearchPage() {
                         {expandedTranscript === video.id && transcriptData[video.id] && (
                           <AnalysisPanel
                             data={transcriptData[video.id]}
+                            source={{ url: video.url, title: video.title, views: video.views }}
                             onDownload={() => {
                               const blob = new Blob([transcriptData[video.id].transcript], { type: "text/plain" });
                               const u = URL.createObjectURL(blob);
@@ -634,13 +733,19 @@ export default function KeywordResearchPage() {
                           <div className="flex-1 min-w-0">
                             <a href={ch.url} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold hover:text-red-400 transition-colors truncate block">{ch.title}</a>
                             <p className="text-[11px] text-muted-foreground truncate">{ch.description}</p>
+                            {ch.likelyAdDriven && (
+                              <span className="mt-1 inline-flex items-center gap-1 text-[9px] font-semibold text-red-400 bg-red-500/10 border border-red-500/20 rounded-full px-1.5 py-0.5"
+                                title="Total views are over 1000× subscribers — reach is likely bought with ads">
+                                <AlertTriangle className="h-2.5 w-2.5" /> Likely ad-driven
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div className="mt-3 grid grid-cols-3 gap-1.5">
                           {[
                             { icon: <Users className="h-2.5 w-2.5 text-blue-400" />, val: fmt(ch.subscribers), label: "Subs" },
                             { icon: <Play className="h-2.5 w-2.5 text-red-400" />, val: fmt(ch.videoCount), label: "Videos" },
-                            { icon: <BarChart2 className="h-2.5 w-2.5 text-green-400" />, val: fmt(ch.viewCount), label: "Views" },
+                            { icon: <BarChart2 className="h-2.5 w-2.5 text-green-400" />, val: fmt(ch.avgViewsPerVideo ?? (ch.videoCount ? Math.round(ch.viewCount / ch.videoCount) : 0)), label: "Avg / video" },
                           ].map(({ icon, val, label }) => (
                             <div key={label} className="bg-black/20 border border-white/[0.04] rounded-lg p-2 text-center">
                               <div className="flex justify-center mb-0.5">{icon}</div>
@@ -680,8 +785,8 @@ export default function KeywordResearchPage() {
                 icon={<Instagram className="h-5 w-5 text-white" />}
                 accent="bg-gradient-to-br from-pink-500 to-purple-600"
                 title="Top Instagram Reels"
-                label={`Top Reels for #${igTag} · sorted by views · est. views shown when unavailable`}
-                count={igReels.length}
+                label={`Reels for #${igTag} · ${(sortBy === "outlier" ? sortLabel.engagement : sortLabel[sortBy]).toLowerCase()}${hideAds && igRanked.hidden ? ` · ${igRanked.hidden} likely ad${igRanked.hidden === 1 ? "" : "s"} hidden` : ""}`}
+                count={shownReels.length}
                 loading={igLoading}
               />
 
@@ -701,7 +806,7 @@ export default function KeywordResearchPage() {
                       <p className="text-xs text-muted-foreground font-mono break-all">{igError}</p>
                     </div>
                   )}
-                  {!igLoading && !igError && igReels.length === 0 && (
+                  {!igLoading && !igError && shownReels.length === 0 && (
                     <div className="glass rounded-2xl p-10 text-center">
                       <Instagram className="mx-auto h-8 w-8 text-muted-foreground/20 mb-3" />
                       <p className="text-sm text-muted-foreground">
@@ -709,7 +814,7 @@ export default function KeywordResearchPage() {
                       </p>
                     </div>
                   )}
-                  {igReels.map((reel, i) => (
+                  {shownReels.map((reel, i) => (
                     <div key={reel.id} className="group">
                       <div className="glass rounded-2xl overflow-hidden hover:border-white/[0.12] transition-all duration-300">
                         <div className="flex gap-2 sm:gap-4 p-3 sm:p-4">
@@ -759,6 +864,7 @@ export default function KeywordResearchPage() {
                               <span className="text-xs text-muted-foreground">❤️ {fmt(reel.likes)}</span>
                               <span className="text-xs text-muted-foreground">💬 {fmt(reel.comments)}</span>
                             </div>
+                            <MetricBadges m={reel.metrics} />
                           </div>
                           <div className="shrink-0 flex items-center">
                             <Button
@@ -775,6 +881,7 @@ export default function KeywordResearchPage() {
                         {igExpanded === reel.id && igAnalysisData[reel.id] && (
                           <AnalysisPanel
                             data={igAnalysisData[reel.id]}
+                            source={{ url: reel.url, title: reel.caption.slice(0, 120), views: reel.plays }}
                             onDownload={() => {
                               const blob = new Blob([igAnalysisData[reel.id].transcript], { type: "text/plain" });
                               const u = URL.createObjectURL(blob);
