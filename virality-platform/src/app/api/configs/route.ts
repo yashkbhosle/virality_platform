@@ -1,44 +1,61 @@
 import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
-import { readConfigs, writeConfigs } from "@/lib/csv";
+import { deleteConfig, getConfig, listConfigs, saveConfig } from "@/lib/pipeline-data";
 import type { Config } from "@/lib/types";
 
+export const dynamic = "force-dynamic";
+
+const SAVE_ERROR = "Couldn't save right now. Please try again in a minute.";
+
 export async function GET() {
-  const configs = readConfigs();
-  return NextResponse.json(configs);
+  try {
+    return NextResponse.json(await listConfigs());
+  } catch (err) {
+    console.error("[configs] list failed", err);
+    return NextResponse.json({ error: "Couldn't load configs right now." }, { status: 500 });
+  }
 }
 
 export async function POST(request: Request) {
-  const body = await request.json();
-  const configs = readConfigs();
+  const body = await request.json().catch(() => ({}));
   const newConfig: Config = {
     id: uuid(),
-    configName: body.configName,
-    creatorsCategory: body.creatorsCategory,
-    analysisInstruction: body.analysisInstruction,
-    newConceptsInstruction: body.newConceptsInstruction,
+    configName: String(body.configName ?? "").trim(),
+    creatorsCategory: String(body.creatorsCategory ?? "").trim(),
+    analysisInstruction: String(body.analysisInstruction ?? ""),
+    newConceptsInstruction: String(body.newConceptsInstruction ?? ""),
   };
-  configs.push(newConfig);
-  writeConfigs(configs);
-  return NextResponse.json(newConfig, { status: 201 });
+  if (!newConfig.configName) return NextResponse.json({ error: "Enter a config name." }, { status: 400 });
+  try {
+    await saveConfig(newConfig);
+    return NextResponse.json(newConfig, { status: 201 });
+  } catch (err) {
+    console.error("[configs] add failed", err);
+    return NextResponse.json({ error: SAVE_ERROR }, { status: 500 });
+  }
 }
 
 export async function PUT(request: Request) {
-  const body = await request.json();
-  const configs = readConfigs();
-  const index = configs.findIndex((c) => c.id === body.id);
-  if (index === -1) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  configs[index] = { ...configs[index], ...body };
-  writeConfigs(configs);
-  return NextResponse.json(configs[index]);
+  const body = await request.json().catch(() => ({}));
+  try {
+    const current = body.id ? await getConfig(String(body.id)) : null;
+    if (!current) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json(await saveConfig({ ...current, ...body, id: current.id }));
+  } catch (err) {
+    console.error("[configs] update failed", err);
+    return NextResponse.json({ error: SAVE_ERROR }, { status: 500 });
+  }
 }
 
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
-  const configs = readConfigs();
-  const filtered = configs.filter((c) => c.id !== id);
-  writeConfigs(filtered);
-  return NextResponse.json({ success: true });
+  try {
+    await deleteConfig(id);
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    console.error("[configs] delete failed", err);
+    return NextResponse.json({ error: SAVE_ERROR }, { status: 500 });
+  }
 }

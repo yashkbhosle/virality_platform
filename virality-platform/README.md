@@ -80,6 +80,13 @@ The **Refresh now** button on My Channel takes a snapshot on demand. Trends and 
 
 Instagram lookups through Apify can take one to two minutes, so these routes set `maxDuration = 300`. Check that your Vercel plan allows that function duration.
 
+## Pipeline data (Creators, Configs, Videos)
+
+The Creators, Configs, Videos and Run Pipeline pages keep their data in the store (collections `pipeline_creators`, `pipeline_configs`, `pipeline_videos`), through `src/lib/pipeline-data.ts`. They used to write `../data/*.csv`, which fails on Vercel (read-only filesystem).
+
+- Locally, the old CSV files are imported automatically the first time each list is opened.
+- To copy them into Supabase for the deployed site, run `npm run migrate:pipeline` once from `virality-platform/` (uses the repo-root `.env`). Running it again does nothing.
+
 ## Apify cache
 
 Instagram data comes from Apify, which charges per result. To avoid paying twice for the same lookup, every Apify call except My Channel goes through `src/lib/apify-cache.ts`. Results are stored in the `apify_cache` collection (Supabase in production, `../data/apify_cache.json` locally).
@@ -90,7 +97,7 @@ Instagram data comes from Apify, which charges per result. To avoid paying twice
 | Discover hashtag search | 60 per run | 3 days |
 | Creator reels on the Watchlist (`/api/ig-profile`) | 200 | 15 days |
 | Profile lookups (Discover, add creator) | 1 per profile | 15 days |
-| Creator stats, last 30 days (`scrapeCreatorStats`) | 60, newer than 30 days | 15 days |
+| Creators page stats, last 30 days (`scrapeCreatorStats`: Add, Refresh) | 1 profile + 60 reels, newer than 30 days | 3 days |
 | Pipeline reels (`scrapeReels`) | 3 × max videos (60 to 150), newer than *n* days | 15 days |
 | Reel transcript (`/api/ig-analyze`) | 1 | 30 days |
 | My Channel snapshots | 1 profile + 20 reels | not cached (always live) |

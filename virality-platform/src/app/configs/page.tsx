@@ -32,13 +32,13 @@ export default function ConfigsPage() {
   const [form, setForm] = useState(emptyConfig);
 
   const loadConfigs = () => {
-    fetch("/api/configs").then((r) => r.json()).then(setConfigs);
+    fetch("/api/configs").then((r) => r.json()).then((d) => (Array.isArray(d) ? d : [])).then(setConfigs).catch(() => setConfigs([]));
   };
 
   useEffect(() => {
     loadConfigs();
-    fetch("/api/creators").then((r) => r.json()).then(setCreators);
-    fetch("/api/videos").then((r) => r.json()).then(setVideos);
+    fetch("/api/creators").then((r) => r.json()).then((d) => (Array.isArray(d) ? d : [])).then(setCreators).catch(() => setCreators([]));
+    fetch("/api/videos").then((r) => r.json()).then((d) => (Array.isArray(d) ? d : [])).then(setVideos).catch(() => setVideos([]));
   }, []);
 
   const openNew = () => {
@@ -59,18 +59,15 @@ export default function ConfigsPage() {
   };
 
   const handleSave = async () => {
-    if (editing) {
-      await fetch("/api/configs", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editing.id, ...form }),
-      });
-    } else {
-      await fetch("/api/configs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
-      });
+    const res = await fetch("/api/configs", {
+      method: editing ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(editing ? { id: editing.id, ...form } : form),
+    }).catch(() => null);
+    if (!res || !res.ok) {
+      const data = res ? await res.json().catch(() => ({})) : {};
+      alert(data.error || "Couldn't save this config. Please try again.");
+      return;
     }
     setDialogOpen(false);
     loadConfigs();

@@ -1,14 +1,16 @@
-import { NextResponse } from "next/server";
-import { readCreators, writeCreators } from "@/lib/csv";
+import { wantsFresh } from "@/lib/apify-cache";
+import { getCreator, listCreators, saveCreator } from "@/lib/pipeline-data";
 import { scrapeCreatorStats } from "@/lib/apify";
 
 export const maxDuration = 300;
 
 export async function POST(request: Request) {
-  const body = await request.json();
+  const body = await request.json().catch(() => ({}));
   const ids: string[] = body.ids || [];
+  // Stats saved in the last 3 days are reused (free); { fresh: true } forces a live lookup.
+  const fresh = wantsFresh(body);
 
-  const creators = readCreators();
+  const creators = await listCreators();
   const toRefresh = ids.length > 0
     ? creators.filter((c) => ids.includes(c.id))
     : creators;
@@ -22,19 +24,17 @@ export async function POST(request: Request) {
             encoder.encode(`data: ${JSON.stringify({ type: "progress", username: creator.username, status: "scraping" })}\n\n`)
           );
 
-          const stats = await scrapeCreatorStats(creator.username, { fresh: true });
-          const current = readCreators();
-          const idx = current.findIndex((c) => c.id === creator.id);
-          if (idx !== -1) {
-            current[idx] = {
-              ...current[idx],
+          const stats = await scrapeCreatorStats(creator.username, { fresh });
+          const current = await getCreator(creator.id);
+          if (current) {
+            await saveCreator({
+              ...current,
               profilePicUrl: stats.profilePicUrl,
               followers: stats.followers,
               reelsCount30d: stats.reelsCount30d,
               avgViews30d: stats.avgViews30d,
               lastScrapedAt: new Date().toISOString(),
-            };
-            writeCreators(current);
+            });
           }
 
           controller.enqueue(

@@ -40,7 +40,7 @@ export default function CreatorsPage() {
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
 
   const loadCreators = () => {
-    fetch("/api/creators").then((r) => r.json()).then(setCreators);
+    fetch("/api/creators").then((r) => r.json()).then((d) => (Array.isArray(d) ? d : [])).then(setCreators).catch(() => setCreators([]));
   };
 
   useEffect(() => { loadCreators(); }, []);
@@ -66,21 +66,20 @@ export default function CreatorsPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      if (editing) {
-        await fetch("/api/creators", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: editing.id, ...form }),
-        });
-      } else {
-        await fetch("/api/creators", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(form),
-        });
+      const res = await fetch("/api/creators", {
+        method: editing ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editing ? { id: editing.id, ...form } : form),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || "Couldn't save this creator. Please try again.");
+        return;
       }
       setDialogOpen(false);
       loadCreators();
+    } catch {
+      alert("Couldn't reach the server. Check your connection and try again.");
     } finally {
       setSaving(false);
     }
