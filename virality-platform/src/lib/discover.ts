@@ -35,14 +35,14 @@ function env(name: string): string {
   return v;
 }
 
-async function ytGet<T>(path: string, params: Record<string, string | number>): Promise<T> {
+export async function ytGet<T>(path: string, params: Record<string, string | number>): Promise<T> {
   const qs = new URLSearchParams({ ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])), key: env("YOUTUBE_API_KEY") });
   const res = await fetch(`${YT_BASE}/${path}?${qs}`);
   if (!res.ok) throw new Error(`YouTube ${path} ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return res.json() as Promise<T>;
 }
 
-async function apifyRun<T>(actor: string, input: Record<string, unknown>, timeoutSecs = 240): Promise<T[]> {
+export async function apifyRun<T>(actor: string, input: Record<string, unknown>, timeoutSecs = 240): Promise<T[]> {
   const res = await fetch(
     `${APIFY_BASE}/${actor}/run-sync-get-dataset-items?token=${env("APIFY_API_TOKEN")}&timeout=${timeoutSecs}`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }
