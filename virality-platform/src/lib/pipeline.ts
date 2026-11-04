@@ -1,5 +1,6 @@
 import { v4 as uuid } from "uuid";
-import { listConfigs, listCreators, saveVideos } from "./pipeline-data";
+import { listConfigs, listCreators, listVideos, saveVideos } from "./pipeline-data";
+import { instagramAnalysisKey } from "./analysis-cache";
 import { scrapeReels } from "./apify";
 import { uploadVideo, analyzeVideo } from "./gemini";
 import { generateNewConcepts } from "./claude";
@@ -7,7 +8,7 @@ import type { PipelineParams, PipelineProgress, Video, ActiveTask } from "./type
 
 const VIDEO_CONCURRENCY = 3;
 
-interface ScrapedVideo {
+export interface ScrapedVideo {
   videoUrl: string;
   postUrl: string;
   views: number;
@@ -33,6 +34,27 @@ async function runWithConcurrency<T>(
   await Promise.all(workers);
 }
 
+/**
+ * Splits the top reels into ones this config hasn't analyzed yet and ones it has.
+ * Already-analyzed ones come back as their saved record with today's counts.
+ * The same reel appearing twice in one run is only analyzed once.
+ */
+export function splitAlreadyAnalyzed(top: ScrapedVideo[], saved: Video[], configName: string): { toAnalyze: ScrapedVideo[]; refreshed: Video[] } {
+  const done = new Map(saved.filter((v) => v.configName === configName).map((v) => [instagramAnalysisKey(v.link), v]));
+  const seen = new Set<string>();
+  const toAnalyze: ScrapedVideo[] = [];
+  const refreshed: Video[] = [];
+  for (const v of top) {
+    const key = instagramAnalysisKey(v.postUrl);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const prev = done.get(key);
+    if (prev) refreshed.push({ ...prev, views: v.views, likes: v.likes, comments: v.comments });
+    else toAnalyze.push(v);
+  }
+  return { toAnalyze, refreshed };
+}
+
 export async function runPipeline(
   params: PipelineParams,
   onProgress: (progress: PipelineProgress) => void
@@ -46,6 +68,7 @@ export async function runPipeline(
     creatorsScraped: 0,
     videosAnalyzed: 0,
     videosTotal: 0,
+    videosSkipped: 0,
     errors: [],
     log: [],
   };
@@ -147,17 +170,30 @@ export async function runPipeline(
       }
     }
 
-    progress.videosTotal = allTopVideos.length;
-    log(`Scraping done. ${allTopVideos.length} videos to analyze (${VIDEO_CONCURRENCY} workers)`);
+    // Skip reels this config already analyzed: no Gemini cost, no duplicate rows.
+    // Their saved records get today's view/like/comment counts (already fetched, so free).
+    const { toAnalyze, refreshed } = splitAlreadyAnalyzed(allTopVideos, await listVideos(), params.configName);
+    progress.videosSkipped = refreshed.length;
+    if (refreshed.length) {
+      try {
+        await saveVideos(refreshed);
+      } catch (err) {
+        console.warn("[pipeline] couldn't update counts on already-analyzed videos", err);
+      }
+    }
+
+    progress.videosTotal = toAnalyze.length;
+    log(
+      `Scraping done. ${toAnalyze.length} new videos to analyze (${VIDEO_CONCURRENCY} workers)` +
+        (refreshed.length ? `, ${refreshed.length} already analyzed for this config, skipped (free)` : "")
+    );
     emit();
 
     // Phase 2: Process videos concurrently
     progress.phase = "analyzing";
     emit();
 
-    const newVideos: Video[] = [];
-
-    await runWithConcurrency(allTopVideos, VIDEO_CONCURRENCY, async (video) => {
+    await runWithConcurrency(toAnalyze, VIDEO_CONCURRENCY, async (video) => {
       const taskId = `video-${uuid().slice(0, 8)}`;
       const label = `${video.views.toLocaleString()} views`;
 
@@ -183,8 +219,8 @@ export async function runPipeline(
           config.analysisInstruction
         );
 
-        updateTask(taskId, "Claude generating concepts");
-        log(`@${video.username} (${label}): Claude generating concepts`);
+        updateTask(taskId, "Writing new concepts");
+        log(`@${video.username} (${label}): writing new concepts`);
 
         const newConcepts = await generateNewConcepts(analysis, config.newConceptsInstruction);
 
@@ -204,7 +240,8 @@ export async function runPipeline(
           starred: false,
         };
 
-        newVideos.push(videoRecord);
+        // Save right away, so a run that gets cut off (e.g. Vercel's 5-minute limit) keeps finished videos.
+        await saveVideos([videoRecord]);
         progress.videosAnalyzed++;
         removeTask(taskId);
         log(`@${video.username} (${label}): done`);
@@ -218,14 +255,13 @@ export async function runPipeline(
       }
     });
 
-    // Write all new videos at once
-    if (newVideos.length > 0) {
-      await saveVideos(newVideos);
-    }
-
     progress.phase = "done";
     progress.status = "completed";
-    log(`Pipeline complete! ${progress.videosAnalyzed}/${progress.videosTotal} videos analyzed, ${progress.errors.length} errors.`);
+    log(
+      `Pipeline complete! ${progress.videosAnalyzed}/${progress.videosTotal} new videos analyzed` +
+        (progress.videosSkipped ? `, ${progress.videosSkipped} skipped (already analyzed)` : "") +
+        `, ${progress.errors.length} errors.`
+    );
     emit();
   } catch (err) {
     progress.status = "error";

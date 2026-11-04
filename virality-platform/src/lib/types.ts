@@ -56,6 +56,8 @@ export interface PipelineProgress {
   creatorsScraped: number;
   videosAnalyzed: number;
   videosTotal: number;
+  /** Top reels skipped because this config already analyzed them (no cost). */
+  videosSkipped?: number;
   errors: string[];
   log: string[];
 }
