@@ -47,6 +47,12 @@ On Vercel, add the same variables in **Project → Settings → Environment Vari
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | persistent storage | yes in production |
 | `STORE_BACKEND` | set to `json` to force local files even when Supabase vars are set | optional |
 | `CRON_SECRET` | protects the daily My Channel snapshot | yes, for the daily job |
+| `APP_USERNAME`, `APP_PASSWORD` | the one login for the app; password at least 12 characters | yes |
+| `AUTH_SECRET` | signs login sessions; at least 32 random characters | yes |
+
+### Login
+
+Every page and API route requires signing in (`/login`). There is one account, set by `APP_USERNAME` and `APP_PASSWORD`. Sessions are HMAC-signed, HTTP-only cookies that last 7 days; changing the username or password signs everyone out. After 5 wrong attempts from one IP, login is blocked for 15 minutes. If the variables are missing or too short, nobody can sign in. The daily cron is let through only with its `CRON_SECRET`.
 
 ## Storage
 
