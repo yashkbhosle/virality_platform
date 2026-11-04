@@ -4,12 +4,12 @@ import { useState, useMemo, useEffect } from "react";
 import {
   Search, Users, Play, Youtube, Loader2, BarChart2, BookOpen,
   Download, Instagram, Heart, X, CheckCircle, ExternalLink,
-  AlertTriangle, TrendingUp, Flame, Target, MessageCircle, Repeat, EyeOff, Eye,
+  AlertTriangle, TrendingUp, Flame, EyeOff, Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { VERDICT_LABEL, type ViralityMetrics, type ViralityVerdict } from "@/lib/virality";
-import type { ViralAnalysis, FrameworkScore } from "@/lib/analysis-prompt";
+import { AnalysisPanel, type TranscriptData } from "@/components/analysis-panel";
 import { trackCreator } from "@/lib/tracked-creators-client";
 import { useActivePersonaId } from "@/lib/active-persona";
 
@@ -59,10 +59,6 @@ interface IGReel {
   ownerUsername: string; ownerProfilePic: string;
   plays: number; likes: number; comments: number; timestamp: string;
   metrics?: ViralityMetrics | null;
-}
-interface TranscriptData {
-  transcript: string;
-  analysis: ViralAnalysis;
 }
 type SortKey = "virality" | "engagement" | "outlier" | "views";
 
@@ -118,24 +114,6 @@ function MetricBadges({ m }: { m?: ViralityMetrics | null }) {
     </div>
   );
 }
-function ScoreBar({ label, s }: { label: string; s?: FrameworkScore }) {
-  if (!s) return null;
-  const score = Math.max(0, Math.min(10, Number(s.score) || 0));
-  const color = score >= 8 ? "bg-green-500" : score >= 5 ? "bg-yellow-500" : "bg-red-500";
-  return (
-    <div className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.05] space-y-1.5">
-      <div className="flex items-center justify-between">
-        <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{label}</p>
-        <p className="text-xs font-bold">{score}/10</p>
-      </div>
-      <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
-        <div className={`h-full ${color}`} style={{ width: `${score * 10}%` }} />
-      </div>
-      {s.note && <p className="text-[11px] text-muted-foreground leading-snug">{s.note}</p>}
-    </div>
-  );
-}
-
 // ── In-app video modal ────────────────────────────────────────────────
 function VideoModal({ video, onClose }: { video: Video; onClose: () => void }) {
   const embedId = ytEmbedId(video.url);
@@ -173,131 +151,6 @@ function VideoModal({ video, onClose }: { video: Video; onClose: () => void }) {
             <span className="text-xs text-muted-foreground">💬 {fmt(video.comments)}</span>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Analysis panel ────────────────────────────────────────────────────
-function AnalysisPanel({ data, onDownload }: { data: TranscriptData; onDownload: () => void }) {
-  const [showFullTranscript, setShowFullTranscript] = useState(false);
-  return (
-    <div className="border-t border-white/[0.06] p-5 space-y-4">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {[
-          { label: "Hook Type", val: data.analysis.hookType, color: "text-orange-400" },
-          { label: "Format",    val: data.analysis.format,   color: "text-blue-400"   },
-          { label: "CTA",       val: data.analysis.cta,      color: "text-green-400"  },
-          { label: "Topics",    val: data.analysis.keyTopics?.slice(0, 2).join(", "), color: "text-purple-400" },
-        ].map(({ label, val, color }) => (
-          <div key={label} className="bg-white/[0.03] rounded-xl p-3 border border-white/[0.05]">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{label}</p>
-            <p className={`text-xs font-semibold ${color} leading-tight`}>{val || "—"}</p>
-          </div>
-        ))}
-      </div>
-      {data.analysis.reachAssessment && (
-        <div className={`rounded-xl p-3 border text-xs flex items-start gap-2 ${
-          data.analysis.reachAssessment === "likely paid"
-            ? "bg-red-500/10 border-red-500/30 text-red-600 dark:text-red-300"
-            : data.analysis.reachAssessment === "organic"
-              ? "bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-300"
-              : "bg-white/[0.03] border-white/[0.08] text-muted-foreground"
-        }`}>
-          {data.analysis.reachAssessment === "likely paid" ? <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" /> : <CheckCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />}
-          <span><b className="uppercase tracking-wider text-[10px]">Reach: {data.analysis.reachAssessment}</b>{data.analysis.reachReason ? ` — ${data.analysis.reachReason}` : ""}</span>
-        </div>
-      )}
-      {data.analysis.targetAvatar && (
-        <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-4">
-          <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5"><Target className="h-3 w-3" /> TARGET AVATAR</p>
-          <p className="text-sm leading-relaxed">{data.analysis.targetAvatar}</p>
-        </div>
-      )}
-      {(data.analysis.hookStrength || data.analysis.engagementRules) && (
-        <div className="space-y-2">
-          <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">SCORECARD · HOOK + 4 ENGAGEMENT RULES</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-            <ScoreBar label="Hook strength" s={data.analysis.hookStrength} />
-            <ScoreBar label="1 · Relevance" s={data.analysis.engagementRules?.relevance} />
-            <ScoreBar label="2 · Non-obvious" s={data.analysis.engagementRules?.nonObvious} />
-            <ScoreBar label="3 · Easy to absorb" s={data.analysis.engagementRules?.absorption} />
-            <ScoreBar label="4 · Short distance" s={data.analysis.engagementRules?.shortDistance} />
-          </div>
-        </div>
-      )}
-      <div className="space-y-2">
-        <div className="bg-orange-500/5 border border-orange-500/20 rounded-xl p-4">
-          <p className="text-[10px] text-orange-400 font-semibold uppercase tracking-wider mb-2">🎣 HOOK</p>
-          <p className="text-sm leading-relaxed">{data.analysis.hook}</p>
-        </div>
-        <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4">
-          <p className="text-[10px] text-blue-400 font-semibold uppercase tracking-wider mb-2">🔥 WHY VIRAL</p>
-          <p className="text-sm leading-relaxed">{data.analysis.whyViral}</p>
-        </div>
-        {data.analysis.contentFormat && (
-          <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-4">
-            <p className="text-[10px] text-purple-400 font-semibold uppercase tracking-wider mb-2">📐 CONTENT BREAKDOWN</p>
-            <p className="text-sm leading-relaxed">{data.analysis.contentFormat}</p>
-          </div>
-        )}
-        {!!data.analysis.commentTriggers?.length && (
-          <div className="bg-pink-500/5 border border-pink-500/20 rounded-xl p-4">
-            <p className="text-[10px] text-pink-400 font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5"><MessageCircle className="h-3 w-3" /> COMMENT TRIGGERS</p>
-            <ul className="text-sm leading-relaxed list-disc pl-4 space-y-1">
-              {data.analysis.commentTriggers.map((t, i) => <li key={i}>{t}</li>)}
-            </ul>
-          </div>
-        )}
-        {!!data.analysis.retentionTactics?.length && (
-          <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
-            <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-2">⏱️ RETENTION TACTICS</p>
-            <ul className="text-sm leading-relaxed list-disc pl-4 space-y-1">
-              {data.analysis.retentionTactics.map((t, i) => <li key={i}>{t}</li>)}
-            </ul>
-          </div>
-        )}
-        {!!data.analysis.replicate?.length && (
-          <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-4">
-            <p className="text-[10px] text-green-400 font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5"><Repeat className="h-3 w-3" /> HOW TO REPLICATE</p>
-            <ol className="text-sm leading-relaxed list-decimal pl-4 space-y-1">
-              {data.analysis.replicate.map((t, i) => <li key={i}>{t}</li>)}
-            </ol>
-          </div>
-        )}
-        {data.analysis.keyTopics?.length > 0 && (
-          <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
-            <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-2">🏷️ KEY TOPICS</p>
-            <div className="flex flex-wrap gap-1.5">
-              {data.analysis.keyTopics.map((t, i) => (
-                <span key={i} className="text-[11px] bg-white/[0.05] border border-white/[0.08] rounded-full px-2.5 py-0.5">{t}</span>
-              ))}
-            </div>
-          </div>
-        )}
-        {data.transcript ? (
-          <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">📝 TRANSCRIPT</p>
-              <div className="flex gap-2">
-                <button onClick={() => setShowFullTranscript(v => !v)} className="text-[10px] text-blue-400 hover:underline">
-                  {showFullTranscript ? "Show less" : "Show full"}
-                </button>
-                <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-1 text-muted-foreground px-2" onClick={onDownload}>
-                  <Download className="h-2.5 w-2.5" /> Download
-                </Button>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
-              {showFullTranscript ? data.transcript : data.transcript.slice(0, 500) + (data.transcript.length > 500 ? "…" : "")}
-            </p>
-          </div>
-        ) : (
-          <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
-            <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-1">📝 TRANSCRIPT</p>
-            <p className="text-xs text-muted-foreground">No transcript available — analysis based on caption and engagement metrics.</p>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -485,11 +338,11 @@ export default function KeywordResearchPage() {
           views: video.views, likes: video.likes, comments: video.comments, metrics: video.metrics ?? null,
         }),
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error);
       setTranscriptData(prev => ({ ...prev, [video.id]: data }));
       setExpandedTranscript(video.id);
-    } catch (e: any) { alert("Transcript error: " + e.message); }
+    } catch (e: unknown) { alert((e instanceof Error && e.message) || "Couldn't analyze this video right now. Please try again."); }
     finally { setTranscriptLoading(null); }
   };
 
@@ -504,11 +357,11 @@ export default function KeywordResearchPage() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: reel.url, caption: reel.caption, plays: reel.plays, likes: reel.likes, comments: reel.comments, username: reel.ownerUsername, metrics: reel.metrics ?? null }),
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error);
       setIgAnalysisData(prev => ({ ...prev, [reel.id]: data }));
       setIgExpanded(reel.id);
-    } catch (e: any) { alert("Analysis error: " + e.message); }
+    } catch (e: unknown) { alert((e instanceof Error && e.message) || "Couldn't analyze this reel right now. Please try again."); }
     finally { setIgAnalysisLoading(null); }
   };
 
@@ -825,6 +678,7 @@ export default function KeywordResearchPage() {
                         {expandedTranscript === video.id && transcriptData[video.id] && (
                           <AnalysisPanel
                             data={transcriptData[video.id]}
+                            source={{ url: video.url, title: video.title, views: video.views }}
                             onDownload={() => {
                               const blob = new Blob([transcriptData[video.id].transcript], { type: "text/plain" });
                               const u = URL.createObjectURL(blob);
@@ -1014,6 +868,7 @@ export default function KeywordResearchPage() {
                         {igExpanded === reel.id && igAnalysisData[reel.id] && (
                           <AnalysisPanel
                             data={igAnalysisData[reel.id]}
+                            source={{ url: reel.url, title: reel.caption.slice(0, 120), views: reel.plays }}
                             onDownload={() => {
                               const blob = new Blob([igAnalysisData[reel.id].transcript], { type: "text/plain" });
                               const u = URL.createObjectURL(blob);

@@ -1,17 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GEMINI_GENERATE_URL } from "@/lib/gemini-model";
-import { buildViralAnalysisPrompt, parseViralAnalysis } from "@/lib/analysis-prompt";
+import { buildViralAnalysisPrompt, normalizeExtras, type ViralAnalysis } from "@/lib/analysis-prompt";
+import { geminiJSON } from "@/lib/gemini-json";
 import type { ViralityMetrics } from "@/lib/virality";
 
 export const maxDuration = 120;
-
-const GEMINI_URL = GEMINI_GENERATE_URL;
-
-function getKey(): string {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error("GEMINI_API_KEY not set");
-  return key;
-}
 
 function extractYouTubeId(url: string): string | null {
   const patterns = [
@@ -31,8 +23,6 @@ async function analyzeVideoWithGemini(
   youtubeUrl: string,
   ctx: { title: string; creator: string; views: number; likes: number; comments: number; metrics: ViralityMetrics | null }
 ) {
-  const key = getKey();
-
   const prompt = buildViralAnalysisPrompt({
     platform: "YouTube Short",
     title: ctx.title,
@@ -45,30 +35,9 @@ async function analyzeVideoWithGemini(
     includeTranscript: true,
   });
 
-  const res = await fetch(`${GEMINI_URL}?key=${key}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
-            { fileData: { fileUri: youtubeUrl } },
-            { text: prompt },
-          ],
-        },
-      ],
-      generationConfig: { responseMimeType: "application/json" },
-    }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Gemini error ${res.status}: ${errText}`);
-  }
-
-  const data = await res.json();
-  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-  return parseViralAnalysis(raw);
+  // geminiJSON retries overloads and falls back to GEMINI_FALLBACK_MODEL.
+  const raw = await geminiJSON<ViralAnalysis & { transcript?: string }>({ prompt, fileUri: youtubeUrl, temperature: 0.7 });
+  return normalizeExtras(raw);
 }
 
 export async function POST(req: NextRequest) {
@@ -76,7 +45,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const videoId = extractYouTubeId(url);
-    if (!videoId) throw new Error("Invalid YouTube URL");
+    if (!videoId) return NextResponse.json({ error: "That doesn't look like a YouTube link." }, { status: 400 });
 
     // Gemini accepts both watch and shorts URLs directly
     const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
@@ -91,7 +60,8 @@ export async function POST(req: NextRequest) {
 
     const { transcript = "", ...analysis } = result;
     return NextResponse.json({ transcript, analysis });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err) {
+    console.error("[transcript] analysis failed", err);
+    return NextResponse.json({ error: "Couldn't analyze this video right now. Please try again in a minute." }, { status: 502 });
   }
 }

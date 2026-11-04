@@ -89,3 +89,18 @@ export interface Persona {
   createdAt: string;
   updatedAt: string;
 }
+
+// ── F3/F6: Saved hook formulas ──────────────────────────────────────────────
+
+export interface SavedHook {
+  id: string;
+  personaId?: string;
+  template: string;
+  structureName: string;
+  libraryId?: string;
+  variables: { name: string; example: string }[];
+  sourceVideoUrl?: string;
+  sourceTitle?: string;
+  sourceViews?: number;
+  createdAt: string;
+}

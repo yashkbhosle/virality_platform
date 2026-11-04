@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GEMINI_GENERATE_URL } from "@/lib/gemini-model";
-import { buildViralAnalysisPrompt, parseViralAnalysis } from "@/lib/analysis-prompt";
+import { buildViralAnalysisPrompt, normalizeExtras, type ViralAnalysis } from "@/lib/analysis-prompt";
+import { geminiJSON } from "@/lib/gemini-json";
 import type { ViralityMetrics } from "@/lib/virality";
 
 export const maxDuration = 120;
-
-const GEMINI_URL = GEMINI_GENERATE_URL;
 
 // Try to get real audio transcript via Apify's reel scraper (includeTranscript feature)
 async function fetchReelTranscript(reelUrl: string): Promise<string> {
@@ -37,9 +35,6 @@ async function analyzeWithGemini(params: {
   comments: number; username: string; transcript: string;
   metrics: ViralityMetrics | null;
 }) {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error("GEMINI_API_KEY not set");
-
   const prompt = buildViralAnalysisPrompt({
     platform: "Instagram Reel",
     caption: params.caption,
@@ -53,19 +48,12 @@ async function analyzeWithGemini(params: {
     includeTranscript: false,
   });
 
-  const res = await fetch(`${GEMINI_URL}?key=${key}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: "application/json" },
-    }),
-  });
-
-  if (!res.ok) throw new Error(`Gemini error: ${await res.text()}`);
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-  return parseViralAnalysis(text);
+  // geminiJSON retries overloads and falls back to GEMINI_FALLBACK_MODEL.
+  const raw = await geminiJSON<ViralAnalysis>({ prompt, temperature: 0.7 });
+  const analysis = normalizeExtras(raw);
+  // Gemini cannot watch Instagram videos, so the filming notes are a best guess.
+  if (analysis.visualPlaybook) analysis.visualPlaybook.inferred = true;
+  return analysis;
 }
 
 export async function POST(req: NextRequest) {
@@ -83,7 +71,8 @@ export async function POST(req: NextRequest) {
       metrics,
     });
     return NextResponse.json({ transcript, analysis });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err) {
+    console.error("[ig-analyze] analysis failed", err);
+    return NextResponse.json({ error: "Couldn't analyze this reel right now. Please try again in a minute." }, { status: 502 });
   }
 }

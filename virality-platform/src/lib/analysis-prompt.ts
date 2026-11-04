@@ -15,6 +15,7 @@ import {
   describeMetricsForPrompt,
   type ViralityMetrics,
 } from "./virality";
+import { DEFAULT_HOOKS } from "./hook-library";
 
 export interface FrameworkScore {
   score: number; // 1–10
@@ -44,6 +45,38 @@ export interface ViralAnalysis {
   commentTriggers?: string[];
   retentionTactics?: string[];
   replicate?: string[];
+  // F3: reusable hook template
+  hookFormula?: HookFormula;
+  // F4: how it was filmed + phone-only shot list
+  visualPlaybook?: VisualPlaybook;
+}
+
+export interface HookFormula {
+  template: string; // "Don't [risky action] without [protective thing] — here's what happened to me"
+  structure: string; // e.g. "Warning + personal stakes"
+  libraryId?: string; // id of the matching DEFAULT_HOOKS structure, if any
+  variables: { name: string; example: string }[];
+}
+
+export interface ShotStep {
+  step: number;
+  shot: string;
+  durationSec: number;
+  tip: string;
+}
+
+export interface VisualPlaybook {
+  camera: string;
+  setting: string;
+  bRoll: string[];
+  onScreenText: string;
+  editing: string;
+  audio: string;
+  colorAndLighting: string;
+  lengthSeconds?: number;
+  beginnerShotList: ShotStep[];
+  /** True when the model could not watch the video (Instagram) and inferred the visuals. */
+  inferred?: boolean;
 }
 
 export interface PromptContext {
@@ -127,20 +160,124 @@ Return ONLY valid JSON (no markdown fences, no extra text) in exactly this shape
   "retentionTactics": ["Specific techniques that keep people watching (pattern interrupts, open loops, pacing, on-screen text, etc.)"],
   "keyTopics": ["topic1", "topic2", "topic3"],
   "cta": "Call to action at the end, or 'None detected'",
-  "replicate": ["3 concrete, actionable steps to adapt this video's winning elements for a different account in the same niche"]
-}`;
+  "replicate": ["3 concrete, actionable steps to adapt this video's winning elements for a different account in the same niche"],
+  "hookFormula": {
+    "template": "The opening line as a reusable template with [bracketed variables]",
+    "structure": "Short name of the hook structure, e.g. 'Warning + personal stakes'",
+    "libraryId": "id of the closest library structure below, or null if none fits",
+    "variables": [{"name": "variable name exactly as written inside the brackets", "example": "what it was in this video"}]
+  },
+  "visualPlaybook": {
+    "camera": "Framing, angle, distance, eye contact, handheld vs tripod",
+    "setting": "Location, background, props",
+    "bRoll": ["Specific cutaway shots"],
+    "onScreenText": "Caption style, keyword highlights, position on screen",
+    "editing": "Cut frequency, zooms, transitions, pacing (e.g. cuts every ~2 sec)",
+    "audio": "Voice style, music, sound effects",
+    "colorAndLighting": "Lighting setup and colour look",
+    "lengthSeconds": number or null,
+    "beginnerShotList": [{"step": 1, "shot": "What to film", "durationSec": 3, "tip": "How to do it with a phone"}]
+  }
+}
+
+HOOK FORMULA RULES
+- Turn the exact opening line into a reusable template by replacing the specific nouns, numbers and outcomes with [bracketed variables]. Keep the rhythm and emotional trigger identical.
+- Use 2–4 variables. Every [variable] in the template must appear in "variables" with the same name, and its example must be the original words from this video.
+- Map to the closest library structure if one fits (use its id), otherwise set libraryId to null:
+${HOOK_LIBRARY_LIST}
+
+VISUAL PLAYBOOK RULES
+- ${ctx.hasVideo
+    ? "You can watch the video: describe what you SEE (actual framing, real cut timing, the exact on-screen text style)."
+    : "You cannot see the video (caption/transcript only): infer carefully and write 'likely' wherever you are unsure."}
+- beginnerShotList must have 4–8 steps that are filmable with just a phone and natural light, in shooting order, with realistic durations that add up to roughly the video length.`;
+}
+
+const HOOK_LIBRARY_LIST = DEFAULT_HOOKS.map((h) => `  - ${h.id}: ${h.name} ("${h.template}")`).join("\n");
+
+// ── Normalisers for model output (keep the UI safe from malformed fields) ──
+
+function str(v: unknown): string {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+function strList(v: unknown, max = 12): string[] {
+  return Array.isArray(v) ? v.map(str).filter(Boolean).slice(0, max) : [];
+}
+
+export function normalizeHookFormula(v: unknown): HookFormula | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const r = v as Record<string, unknown>;
+  const template = str(r.template);
+  if (!template) return undefined;
+  const libraryId = str(r.libraryId);
+  const variables = (Array.isArray(r.variables) ? r.variables : [])
+    .map((x) => {
+      const o = (x && typeof x === "object" ? x : {}) as Record<string, unknown>;
+      return { name: str(o.name).replace(/^\[|\]$/g, ""), example: str(o.example) };
+    })
+    .filter((x) => x.name)
+    .slice(0, 6);
+  // Add any [variable] in the template the model forgot to list.
+  for (const m of template.matchAll(/\[([^\]]+)\]/g)) {
+    if (!variables.some((x) => x.name.toLowerCase() === m[1].toLowerCase())) variables.push({ name: m[1], example: "" });
+  }
+  return {
+    template,
+    structure: str(r.structure),
+    libraryId: DEFAULT_HOOKS.some((h) => h.id === libraryId) ? libraryId : undefined,
+    variables,
+  };
+}
+
+export function normalizeShotList(v: unknown): ShotStep[] {
+  return (Array.isArray(v) ? v : [])
+    .map((x, i) => {
+      const o = (x && typeof x === "object" ? x : {}) as Record<string, unknown>;
+      const d = Number(o.durationSec);
+      return { step: i + 1, shot: str(o.shot), durationSec: Number.isFinite(d) && d > 0 ? Math.round(d) : 0, tip: str(o.tip) };
+    })
+    .filter((s) => s.shot)
+    .slice(0, 10);
+}
+
+export function normalizeVisualPlaybook(v: unknown): VisualPlaybook | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const r = v as Record<string, unknown>;
+  const len = Number(r.lengthSeconds);
+  const pb: VisualPlaybook = {
+    camera: str(r.camera),
+    setting: str(r.setting),
+    bRoll: strList(r.bRoll),
+    onScreenText: str(r.onScreenText),
+    editing: str(r.editing),
+    audio: str(r.audio),
+    colorAndLighting: str(r.colorAndLighting),
+    lengthSeconds: Number.isFinite(len) && len > 0 ? Math.round(len) : undefined,
+    beginnerShotList: normalizeShotList(r.beginnerShotList),
+  };
+  const hasContent = pb.camera || pb.setting || pb.editing || pb.beginnerShotList.length;
+  return hasContent ? pb : undefined;
+}
+
+/** Normalise the optional F3/F4 fields on a parsed analysis in place. */
+export function normalizeExtras<T extends ViralAnalysis>(a: T): T {
+  const raw = a as unknown as Record<string, unknown>;
+  a.hookFormula = normalizeHookFormula(raw.hookFormula);
+  a.visualPlaybook = normalizeVisualPlaybook(raw.visualPlaybook);
+  return a;
 }
 
 export function parseViralAnalysis(raw: string): ViralAnalysis & { transcript?: string } {
   const cleaned = raw.replace(/```json|```/g, "").trim();
   try {
-    return JSON.parse(cleaned);
+    return normalizeExtras(JSON.parse(cleaned));
   } catch {
     // Try to salvage the first JSON object in the text
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
     if (start >= 0 && end > start) {
-      try { return JSON.parse(cleaned.slice(start, end + 1)); } catch { /* fall through */ }
+      try { return normalizeExtras(JSON.parse(cleaned.slice(start, end + 1))); } catch { /* fall through */ }
     }
     return {
       hook: "Could not parse",
