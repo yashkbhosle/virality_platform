@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -21,7 +22,8 @@ export async function GET(req: NextRequest) {
         body: JSON.stringify({
           directUrls: [`https://www.instagram.com/${username}/reels/`],
           resultsType: "posts",
-          resultsLimit: 500,
+          // The newest 60 reels are plenty to rank, and far faster/cheaper than 500.
+          resultsLimit: 60,
           isUserReelFeedURL: true,
           addParentData: false,
           timeoutSecs: 180,
@@ -29,12 +31,21 @@ export async function GET(req: NextRequest) {
       }
     );
 
-    if (!res.ok) throw new Error(`Apify error ${res.status}: ${await res.text()}`);
+    if (!res.ok) {
+      const detail = await res.text();
+      if (res.status === 402 || /usage hard limit|not enough usage|exceeded/i.test(detail)) {
+        return NextResponse.json(
+          { error: "Your Apify account has used up its monthly limit, so Instagram reels can't load. Raise the limit or add credit at console.apify.com (Billing), or wait for next month's reset." },
+          { status: 402 }
+        );
+      }
+      throw new Error(`Apify error ${res.status}: ${detail.slice(0, 300)}`);
+    }
 
     const data = await res.json() as any[];
 
     const reels = data
-      .filter((item: any) => !!item.videoUrl)
+      .filter((item: any) => !item.error && !!item.videoUrl)
       .sort((a: any, b: any) => (b.videoPlayCount || 0) - (a.videoPlayCount || 0))
       .slice(0, limit)
       .map((item: any, i: number) => ({
@@ -51,9 +62,15 @@ export async function GET(req: NextRequest) {
       }));
 
     console.log(`[ig-profile] @${username} → ${data.length} total, ${reels.length} reels`);
+    if (reels.length === 0) {
+      return NextResponse.json(
+        { error: `No reels found for @${username}. Check that the account is public and has reels, or try again later.` },
+        { status: 404 }
+      );
+    }
     return NextResponse.json({ reels, total: data.length });
   } catch (err: any) {
     console.error("[ig-profile] error:", err.message);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: "Couldn't load reels from Instagram right now. Please try again in a minute." }, { status: 502 });
   }
 }

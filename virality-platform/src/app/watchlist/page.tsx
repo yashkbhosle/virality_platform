@@ -4,17 +4,15 @@ import { useState, useEffect } from "react";
 import {
   Plus, Trash2, RefreshCw, Loader2, Play, Eye, TrendingUp,
   Youtube, ChevronRight, BarChart2, X, Instagram, Users,
-  UserCheck, Film, Pencil, BookOpen, Download, ExternalLink,
+  Film, BookOpen, Download, ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import Link from "next/link";
-import type { Creator } from "@/lib/types";
 import { formatCount, tierLabel, type SizeTier, type TrackedCreator } from "@/lib/creators-shared";
 import { listTracked, migrateLegacyWatchlist, trackCreator, untrackCreator } from "@/lib/tracked-creators-client";
 import { usePersonas } from "@/lib/use-personas";
@@ -555,161 +553,89 @@ function YoutubeTab() {
 }
 
 // ── Instagram Competitors tab ─────────────────────────────────────────
-// Instagram creators tracked from Discover / Keyword Research (persisted store).
-function TrackedInstagramList() {
-  const [items, setItems] = useState<TrackedCreator[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const { names } = usePersonas();
-
-  const load = () =>
-    migrateLegacyWatchlist()
-      .then(() => listTracked("instagram"))
-      .then((list) => { setItems(list); setError(null); })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Couldn't load tracked creators."));
-  useEffect(() => { load(); }, []);
-
-  const remove = async (id: string) => {
-    const prev = items;
-    setItems((items ?? []).filter((c) => c.id !== id));
-    try { await untrackCreator(id); } catch { setItems(prev); setError("Couldn't remove this creator. Please try again."); }
-  };
-
-  if (error) {
-    return (
-      <div className="glass rounded-2xl p-4 flex items-center justify-between gap-3 text-sm">
-        <span className="text-rose-600 dark:text-rose-300">{error}</span>
-        <Button variant="ghost" size="sm" onClick={load} className="rounded-xl text-xs h-8 gap-1.5"><RefreshCw className="h-3 w-3" /> Retry</Button>
-      </div>
-    );
-  }
-  if (!items || items.length === 0) return null;
-
-  return (
-    <div className="glass rounded-2xl p-4 space-y-3">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tracked creators ({items.length})</p>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {items.map((c) => (
-          <div key={c.id} className="flex items-center gap-3 rounded-xl border border-border p-3">
-            {c.thumbnail ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={`/api/proxy-image?url=${encodeURIComponent(c.thumbnail)}`} alt="" className="h-9 w-9 rounded-full object-cover" />
-            ) : (
-              <div className="h-9 w-9 rounded-full bg-pink-500/15 flex items-center justify-center"><Instagram className="h-4 w-4 text-pink-500" /></div>
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold truncate">@{c.handle}</p>
-              <p className="text-[11px] text-muted-foreground truncate">
-                {c.followers ? `${formatCount(c.followers)} followers · ${tierLabel(c.tier)}` : c.name}
-                {c.personaId && names[c.personaId] && ` · for ${names[c.personaId]}`}
-              </p>
-            </div>
-            <a href={c.url || `https://www.instagram.com/${c.handle}/reels/`} target="_blank" rel="noreferrer"
-              className="text-muted-foreground hover:text-foreground" title="Open reels"><ExternalLink className="h-3.5 w-3.5" /></a>
-            <button onClick={() => remove(c.id)} className="text-muted-foreground hover:text-rose-600 dark:hover:text-rose-300" title="Stop tracking">
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+// One list, saved in the persisted store (/api/tracked-creators): creators added here
+// and creators tracked from Discover / Keyword Research.
+interface IgReel {
+  url: string; thumbnail?: string; caption?: string; views: number; likes: number; comments: number; timestamp?: string;
 }
 
 function InstagramTab() {
-  const [creators, setCreators] = useState<Creator[]>([]);
+  const [creators, setCreators] = useState<TrackedCreator[] | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState<Creator | null>(null);
-  const [form, setForm] = useState({ username: "", category: "" });
+  const [username, setUsername] = useState("");
   const [saving, setSaving] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
+  const { names, activeId } = usePersonas();
 
-  // Top reels state (mirrors YouTube channelStats pattern)
-  const [profileReels, setProfileReels] = useState<Record<string, { reels: any[]; loading: boolean; error?: string }>>({});
+  const [profileReels, setProfileReels] = useState<Record<string, { reels: IgReel[]; loading: boolean; error?: string }>>({});
   const [igAnalysis, setIgAnalysis] = useState<Record<string, TranscriptData>>({});
   const [expandedAnalysis, setExpandedAnalysis] = useState<string | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState<string | null>(null);
 
-  const load = () => fetch("/api/creators").then(r => r.json()).then(setCreators);
+  const load = () =>
+    migrateLegacyWatchlist()
+      .then(() => listTracked("instagram"))
+      .then((list) => { setCreators(list); setListError(null); })
+      .catch((e: unknown) => setListError(e instanceof Error ? e.message : "Couldn't load your creators."));
   useEffect(() => { load(); }, []);
 
-  const openNew = () => { setEditing(null); setForm({ username: "", category: "" }); setDialogOpen(true); };
-  const openEdit = (c: Creator) => { setEditing(c); setForm({ username: c.username, category: c.category }); setDialogOpen(true); };
-
-  const handleSave = async () => {
+  const handleAdd = async () => {
+    const handle = username.trim().replace(/^@/, "").replace(/^https?:\/\/(www\.)?instagram\.com\//i, "").split(/[/?#]/)[0];
+    if (!handle) return;
     setSaving(true);
+    setAddError(null);
     try {
-      if (editing) {
-        await fetch("/api/creators", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: editing.id, ...form }) });
-      } else {
-        await fetch("/api/creators", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      // Look the profile up first so the card shows followers and a picture.
+      const res = await fetch("/api/discover/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: `https://www.instagram.com/${handle}/` }),
+      });
+      const data = await res.json().catch(() => ({}));
+      const found = Array.isArray(data.creators) ? data.creators[0] : undefined;
+      if (!found && Array.isArray(data.notFound) && data.notFound.length) {
+        setAddError(`We couldn't find @${handle}. Check the username and that the account is public.`);
+        return;
       }
-      setDialogOpen(false); load();
-    } finally { setSaving(false); }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm("Delete this creator?")) return;
-    await fetch(`/api/creators?id=${id}`, { method: "DELETE" }); load();
-  };
-
-  const handleRefreshAll = async () => {
-    setRefreshing(true);
-    try {
-      const response = await fetch("/api/creators/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: [] }) });
-      const reader = response.body?.getReader();
-      if (!reader) return;
-      const decoder = new TextDecoder(); let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n"); buffer = lines.pop() || "";
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.type === "progress" && data.status === "scraping") {
-                const c = creators.find(cr => cr.username === data.username);
-                if (c) setRefreshingId(c.id);
-              } else if (data.type === "progress" && data.status === "done") load();
-              else if (data.type === "complete") setRefreshingId(null);
-            } catch { /* skip */ }
-          }
-        }
-      }
-    } finally { setRefreshing(false); setRefreshingId(null); load(); }
-  };
-
-  const handleRefreshOne = async (id: string) => {
-    setRefreshingId(id);
-    try {
-      const response = await fetch("/api/creators/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: [id] }) });
-      const reader = response.body?.getReader();
-      if (!reader) return;
-      const decoder = new TextDecoder(); let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-      }
-      load();
-    } finally { setRefreshingId(null); }
-  };
-
-  const fetchTopReels = async (creator: Creator) => {
-    setProfileReels(prev => ({ ...prev, [creator.id]: { reels: [], loading: true } }));
-    try {
-      const res = await fetch(`/api/ig-profile?username=${encodeURIComponent(creator.username)}&limit=20`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setProfileReels(prev => ({ ...prev, [creator.id]: { reels: data.reels || [], loading: false } }));
-    } catch (e: any) {
-      setProfileReels(prev => ({ ...prev, [creator.id]: { reels: [], loading: false, error: e.message } }));
+      const saved = await trackCreator({
+        platform: "instagram",
+        handle: found?.handle ?? handle,
+        name: found?.name ?? handle,
+        followers: found?.followers ?? 0,
+        thumbnail: found?.thumbnail || undefined,
+        url: `https://www.instagram.com/${found?.handle ?? handle}/`,
+        personaId: activeId ?? undefined,
+      });
+      setCreators((prev) => [saved, ...(prev ?? []).filter((c) => c.id !== saved.id)]);
+      setUsername("");
+      setDialogOpen(false);
+    } catch (e: unknown) {
+      setAddError(e instanceof Error ? e.message : "Couldn't add this creator. Please try again.");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const analyzeReel = async (reel: any, creatorUsername: string) => {
+  const remove = async (id: string) => {
+    const prev = creators;
+    setCreators((creators ?? []).filter((c) => c.id !== id));
+    try { await untrackCreator(id); } catch { setCreators(prev); setListError("Couldn't remove this creator. Please try again."); }
+  };
+
+  const fetchTopReels = async (creator: TrackedCreator) => {
+    setProfileReels(prev => ({ ...prev, [creator.id]: { reels: [], loading: true } }));
+    try {
+      const res = await fetch(`/api/ig-profile?username=${encodeURIComponent(creator.handle)}&limit=20`);
+      const data = await res.json().catch(() => ({ error: "Couldn't load reels right now. Please try again." }));
+      if (data.error) throw new Error(data.error);
+      setProfileReels(prev => ({ ...prev, [creator.id]: { reels: data.reels || [], loading: false } }));
+    } catch (e: unknown) {
+      setProfileReels(prev => ({ ...prev, [creator.id]: { reels: [], loading: false, error: e instanceof Error ? e.message : "Couldn't load reels." } }));
+    }
+  };
+
+  const analyzeReel = async (reel: IgReel, creatorUsername: string) => {
     const key = reel.url;
     if (analysisLoading) return;
     if (expandedAnalysis === key) { setExpandedAnalysis(null); return; }
@@ -720,30 +646,25 @@ function InstagramTab() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          url: reel.url,
-          caption: reel.caption,
-          plays: reel.views,
-          likes: reel.likes,
-          comments: reel.comments,
-          username: creatorUsername,
+          url: reel.url, caption: reel.caption, plays: reel.views, likes: reel.likes, comments: reel.comments, username: creatorUsername,
         }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       setIgAnalysis(prev => ({ ...prev, [key]: data }));
       setExpandedAnalysis(key);
-    } catch (e: any) {
-      alert("Analysis failed: " + e.message);
+    } catch (e: unknown) {
+      alert("Analysis failed: " + (e instanceof Error ? e.message : "please try again."));
     } finally {
       setAnalysisLoading(null);
     }
   };
 
-  const downloadIgCSV = (creator: Creator, reels: any[]) => {
+  const downloadIgCSV = (creator: TrackedCreator, reels: IgReel[]) => {
     if (!reels.length) return;
     const escape = (s: string) => `"${String(s || "").replace(/"/g, '""')}"`;
     const header = ["rank", "url", "views", "likes", "comments", "date", "caption", "hook_type", "format", "why_viral", "hook", "cta", "key_topics"];
-    const rows = reels.map((r: any, i: number) => {
+    const rows = reels.map((r, i) => {
       const a = igAnalysis[r.url];
       return [
         i + 1, r.url, r.views, r.likes, r.comments,
@@ -752,132 +673,107 @@ function InstagramTab() {
         a?.analysis.hookType || "", a?.analysis.format || "",
         a?.analysis.whyViral || "", a?.analysis.hook || "",
         a?.analysis.cta || "", a?.analysis.keyTopics?.join("; ") || "",
-      ].map(c => escape(String(c)));
+      ].map(c => escape(String(c ?? "")));
     });
     const csv = [header.join(","), ...rows.map(r => r.join(","))].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `${creator.username}_top_reels.csv`;
+    a.download = `${creator.handle}_top_reels.csv`;
     a.click();
   };
 
   return (
     <div className="space-y-5">
-      <TrackedInstagramList />
-
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <p className="text-sm text-muted-foreground">Track Instagram competitor accounts and load their top Reels by views</p>
-        <div className="flex gap-2">
-          <Button variant="ghost" onClick={handleRefreshAll} disabled={refreshing} className="rounded-xl glass border-white/[0.08] gap-1.5 text-xs">
-            {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            Refresh Stats
-          </Button>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button onClick={openNew} className="rounded-xl bg-gradient-to-r from-pink-500 to-purple-600 border-0 gap-1.5 text-sm">
-                <Plus className="h-4 w-4" /> Add Creator
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="glass-strong rounded-2xl border-white/[0.08]">
-              <DialogHeader>
-                <DialogTitle>{editing ? "Edit Creator" : "Add IG Creator"}</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 pt-2">
-                <div>
-                  <Label className="text-xs text-muted-foreground">Instagram Username</Label>
-                  <Input value={form.username} onChange={e => setForm({ ...form, username: e.target.value })}
-                    placeholder="e.g. drtanveer" className="mt-1.5 rounded-xl glass border-white/[0.08] h-11" />
-                </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">Category</Label>
-                  <Input value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
-                    placeholder="e.g. health-wellness" className="mt-1.5 rounded-xl glass border-white/[0.08] h-11" />
-                </div>
-                <Button onClick={handleSave} disabled={saving || !form.username || !form.category}
-                  className="w-full rounded-xl h-11 bg-gradient-to-r from-pink-500 to-purple-600 border-0">
-                  {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> {editing ? "Saving…" : "Adding…"}</> : editing ? "Save Changes" : "Add Creator"}
-                </Button>
+        <p className="text-sm text-muted-foreground">Track Instagram creators and load their top Reels by views</p>
+        <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) setAddError(null); }}>
+          <DialogTrigger asChild>
+            <Button className="rounded-xl bg-gradient-to-r from-pink-500 to-purple-600 border-0 gap-1.5 text-sm">
+              <Plus className="h-4 w-4" /> Add Creator
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="glass-strong rounded-2xl border-white/[0.08]">
+            <DialogHeader>
+              <DialogTitle>Add Instagram creator</DialogTitle>
+            </DialogHeader>
+            <form className="space-y-4 pt-2" onSubmit={(e) => { e.preventDefault(); handleAdd(); }}>
+              <div>
+                <Label className="text-xs text-muted-foreground">Instagram username or profile link</Label>
+                <Input value={username} onChange={e => setUsername(e.target.value)} disabled={saving} autoFocus
+                  placeholder="e.g. drtanveer" className="mt-1.5 rounded-xl glass border-white/[0.08] h-11" />
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  {activeId && names[activeId] ? `Saved for your persona ${names[activeId]}. ` : ""}Looking up the profile can take up to a minute.
+                </p>
               </div>
-            </DialogContent>
-          </Dialog>
-        </div>
+              {addError && <p className="text-xs text-rose-600 dark:text-rose-300">{addError}</p>}
+              <Button type="submit" disabled={saving || !username.trim()}
+                className="w-full rounded-xl h-11 bg-gradient-to-r from-pink-500 to-purple-600 border-0 gap-2">
+                {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Looking up profile…</> : "Add Creator"}
+              </Button>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
 
-      {/* Creator list — full-width accordion like YouTube tab */}
-      {creators.length === 0 ? (
+      {listError && (
+        <div className="glass rounded-2xl p-4 flex items-center justify-between gap-3 text-sm">
+          <span className="text-rose-600 dark:text-rose-300">{listError}</span>
+          <Button variant="ghost" size="sm" onClick={load} className="rounded-xl text-xs h-8 gap-1.5"><RefreshCw className="h-3 w-3" /> Retry</Button>
+        </div>
+      )}
+
+      {creators === null && !listError ? (
+        <div className="glass rounded-2xl p-12 flex justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+      ) : (creators ?? []).length === 0 && !listError ? (
         <div className="glass rounded-2xl p-12 text-center">
           <Instagram className="mx-auto h-10 w-10 text-muted-foreground/30 mb-3" />
-          <h3 className="font-semibold">No Instagram competitors yet</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Add one to start tracking.</p>
-          <p className="text-xs text-muted-foreground/60 mt-1">Creators found in Keyword Research can be added via the + Add to Watchlist button</p>
+          <h3 className="font-semibold">No Instagram creators yet</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Click Add Creator, or track creators from Discover Creators.</p>
         </div>
       ) : (
         <div className="space-y-4">
-          {creators.map(creator => {
+          {(creators ?? []).map(creator => {
             const reelState = profileReels[creator.id];
-            const isRefreshing = refreshingId === creator.id;
             return (
               <div key={creator.id} className="glass rounded-2xl overflow-hidden">
                 {/* Creator header row */}
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
-                    {/* Profile pic */}
                     <div className="h-11 w-11 shrink-0 rounded-full overflow-hidden bg-gradient-to-br from-pink-500/20 to-purple-500/20 border border-white/[0.1]">
-                      {creator.profilePicUrl
-                        ? <img src={`/api/proxy-image?url=${encodeURIComponent(creator.profilePicUrl)}`} alt={`@${creator.username}`} className="h-full w-full object-cover" />
-                        : <div className="flex h-full w-full items-center justify-center text-base font-bold text-muted-foreground/50">{creator.username.charAt(0).toUpperCase()}</div>
+                      {creator.thumbnail
+                        // eslint-disable-next-line @next/next/no-img-element
+                        ? <img src={`/api/proxy-image?url=${encodeURIComponent(creator.thumbnail)}`} alt={`@${creator.handle}`} className="h-full w-full object-cover" />
+                        : <div className="flex h-full w-full items-center justify-center text-base font-bold text-muted-foreground/50">{creator.handle.charAt(0).toUpperCase()}</div>
                       }
                     </div>
-                    {/* Name + stats */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <a href={`https://www.instagram.com/${creator.username}/`} target="_blank" rel="noopener noreferrer"
-                          className="text-sm font-semibold hover:text-pink-400 transition-colors">
-                          @{creator.username}
-                        </a>
-                        <Badge variant="secondary" className="rounded-md text-[10px] bg-white/[0.05] border border-white/[0.06]">{creator.category}</Badge>
-                      </div>
-                      {creator.followers > 0 && (
-                        <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                            <UserCheck className="h-3 w-3 text-blue-400" /> {fmt(creator.followers)}
-                          </span>
-                          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                            <Film className="h-3 w-3 text-purple-400" /> {creator.reelsCount30d} reels/30d
-                          </span>
-                          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                            <Eye className="h-3 w-3 text-emerald-400" /> {fmt(creator.avgViews30d)} avg
-                          </span>
-                        </div>
-                      )}
+                      <a href={`https://www.instagram.com/${creator.handle}/`} target="_blank" rel="noopener noreferrer"
+                        className="text-sm font-semibold hover:text-pink-400 transition-colors">
+                        @{creator.handle}
+                      </a>
+                      <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                        {creator.followers ? `${formatCount(creator.followers)} followers · ${tierLabel(creator.tier)}` : creator.name}
+                        {creator.personaId && names[creator.personaId] && ` · for ${names[creator.personaId]}`}
+                      </p>
                     </div>
                   </div>
-                  {/* Action buttons */}
                   <div className="flex gap-2 flex-wrap">
                     <Button variant="ghost" size="sm"
                       onClick={() => fetchTopReels(creator)}
                       disabled={reelState?.loading}
                       className="rounded-xl glass border-white/[0.06] text-xs h-8 gap-1.5">
                       {reelState?.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Film className="h-3 w-3" />}
-                      {reelState?.reels?.length ? "Refresh" : "Load Top Reels"}
+                      {reelState?.loading ? "Loading reels… (up to 2 min)" : reelState?.reels?.length ? "Refresh" : "Load Top Reels"}
                     </Button>
-                    {reelState?.reels?.length > 0 && (
+                    {(reelState?.reels?.length ?? 0) > 0 && (
                       <Button variant="ghost" size="sm" onClick={() => downloadIgCSV(creator, reelState.reels)}
                         className="rounded-xl h-8 px-2 text-[10px] glass border-white/[0.06] text-muted-foreground gap-1">
                         <Download className="h-2.5 w-2.5" /> CSV
                       </Button>
                     )}
-                    <Button variant="ghost" size="sm" onClick={() => handleRefreshOne(creator.id)} disabled={isRefreshing}
-                      className="h-8 w-8 p-0 rounded-xl text-muted-foreground hover:text-foreground">
-                      {isRefreshing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => openEdit(creator)}
-                      className="h-8 w-8 p-0 rounded-xl text-muted-foreground hover:text-foreground">
-                      <Pencil className="h-3 w-3" />
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleDelete(creator.id)}
+                    <Button variant="ghost" size="sm" onClick={() => remove(creator.id)} title="Stop tracking"
                       className="h-8 w-8 p-0 rounded-xl text-muted-foreground hover:text-red-400">
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
@@ -885,21 +781,21 @@ function InstagramTab() {
                 </div>
 
                 {/* Ranked reels list */}
-                {reelState?.reels?.length > 0 && (
+                {(reelState?.reels?.length ?? 0) > 0 && (
                   <div className="border-t border-white/[0.06]">
                     <div className="flex items-center justify-between px-5 py-2 border-b border-white/[0.04]">
                       <p className="text-[10px] text-muted-foreground font-medium">
-                        Top {reelState.reels.length} Reels • Sorted by Views
+                        Top {reelState.reels.length} recent Reels • Sorted by Views
                       </p>
                     </div>
 
-                    {reelState.reels.map((reel: any, i: number) => (
+                    {reelState.reels.map((reel, i) => (
                       <div key={reel.url || i}>
                         <div className="flex items-center gap-3 px-5 py-3 hover:bg-white/[0.03] transition-colors group border-b border-white/[0.04] last:border-0">
                           <span className={`text-sm font-black w-6 shrink-0 ${i < 3 ? "text-pink-400" : "text-muted-foreground/30"}`}>#{i + 1}</span>
-                          {/* Thumbnail — 9:16 portrait ratio */}
                           <div className="h-14 w-10 rounded-lg overflow-hidden bg-white/[0.02] shrink-0">
                             {reel.thumbnail
+                              // eslint-disable-next-line @next/next/no-img-element
                               ? <img
                                   src={`/api/proxy-image?url=${encodeURIComponent(reel.thumbnail)}`}
                                   alt=""
@@ -909,7 +805,6 @@ function InstagramTab() {
                               : <div className="h-full w-full bg-white/[0.03]" />
                             }
                           </div>
-                          {/* Caption + metadata */}
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-medium line-clamp-1 leading-snug">
                               {reel.caption?.slice(0, 120) || "(no caption)"}
@@ -917,14 +812,13 @@ function InstagramTab() {
                             <div className="flex items-center gap-2 mt-0.5">
                               {reel.timestamp && (
                                 <span className="text-[10px] text-muted-foreground">
-                                  {new Date(reel.timestamp).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                                  {new Date(reel.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                                 </span>
                               )}
-                              {reel.likes > 0 && <span className="text-[10px] text-muted-foreground">· 👍 {fmt(reel.likes)}</span>}
-                              {reel.comments > 0 && <span className="text-[10px] text-muted-foreground">💬 {fmt(reel.comments)}</span>}
+                              {reel.likes > 0 && <span className="text-[10px] text-muted-foreground">· {fmt(reel.likes)} likes</span>}
+                              {reel.comments > 0 && <span className="text-[10px] text-muted-foreground">· {fmt(reel.comments)} comments</span>}
                             </div>
                           </div>
-                          {/* Views + actions */}
                           <div className="flex items-center gap-2 shrink-0">
                             <div className="flex items-center gap-1">
                               <Play className="h-3 w-3 text-pink-400 fill-pink-400" />
@@ -935,7 +829,7 @@ function InstagramTab() {
                               <ExternalLink className="h-3 w-3" />
                             </a>
                             <Button variant="ghost" size="sm"
-                              onClick={() => analyzeReel(reel, creator.username)}
+                              onClick={() => analyzeReel(reel, creator.handle)}
                               disabled={analysisLoading === reel.url}
                               className={`h-7 rounded-lg text-[10px] gap-1 px-2.5 border transition-colors ${expandedAnalysis === reel.url ? "bg-pink-500/20 border-pink-500/30 text-pink-300" : "glass border-white/[0.08] text-muted-foreground hover:text-foreground"}`}>
                               {analysisLoading === reel.url
@@ -955,7 +849,7 @@ function InstagramTab() {
 
                 {reelState?.error && (
                   <div className="border-t border-white/[0.06] px-5 py-3">
-                    <p className="text-xs text-red-400">Error: {reelState.error}</p>
+                    <p className="text-xs text-red-400">{reelState.error}</p>
                   </div>
                 )}
               </div>
