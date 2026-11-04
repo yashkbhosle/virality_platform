@@ -86,6 +86,8 @@ The Creators, Configs, Videos and Run Pipeline pages keep their data in the stor
 
 - Locally, the old CSV files are imported automatically the first time each list is opened.
 - To copy them into Supabase for the deployed site, run `npm run migrate:pipeline` once from `virality-platform/` (uses the repo-root `.env`). Running it again does nothing.
+- **Run Pipeline skips reels a config already analyzed** (matched by reel shortcode), so re-running costs nothing for them and adds no duplicates. Their saved rows get the latest view, like and comment counts. To analyze a reel again, delete its row from the store first.
+- Each video is saved as soon as it is analyzed, so a run cut off by Vercel's 5-minute limit keeps what it finished. Running it again picks up the rest.
 
 ## Apify cache
 

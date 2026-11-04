@@ -176,6 +176,9 @@ export default function RunPage() {
                 {(progress.phase === "analyzing" || progress.phase === "done") && (
                   <span>Videos: <span className="text-foreground">{progress.videosAnalyzed}/{progress.videosTotal}</span></span>
                 )}
+                {(progress.phase === "analyzing" || progress.phase === "done") && !!progress.videosSkipped && (
+                  <span>Skipped (already analyzed): <span className="text-foreground">{progress.videosSkipped}</span></span>
+                )}
                 {progress.errors.length > 0 && (
                   <span className="inline-flex items-center gap-1 text-red-400">
                     <AlertTriangle className="h-3 w-3" />
