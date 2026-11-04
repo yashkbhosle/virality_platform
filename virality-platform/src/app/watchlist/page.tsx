@@ -559,6 +559,16 @@ interface IgReel {
   url: string; thumbnail?: string; caption?: string; views: number; likes: number; comments: number; timestamp?: string;
 }
 
+/** "3 days ago", "5 hours ago", "a few minutes ago" */
+function dataAge(iso: string): string {
+  const mins = Math.max(0, (Date.now() - Date.parse(iso)) / 60000);
+  if (mins < 60) return "a few minutes ago";
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
 function InstagramTab() {
   const [creators, setCreators] = useState<TrackedCreator[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -568,7 +578,7 @@ function InstagramTab() {
   const [addError, setAddError] = useState<string | null>(null);
   const { names, activeId } = usePersonas();
 
-  const [profileReels, setProfileReels] = useState<Record<string, { reels: IgReel[]; loading: boolean; error?: string }>>({});
+  const [profileReels, setProfileReels] = useState<Record<string, { reels: IgReel[]; loading: boolean; error?: string; savedAt?: string; fromCache?: boolean }>>({});
   const [igAnalysis, setIgAnalysis] = useState<Record<string, TranscriptData>>({});
   const [expandedAnalysis, setExpandedAnalysis] = useState<string | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState<string | null>(null);
@@ -630,7 +640,7 @@ function InstagramTab() {
       const res = await fetch(`/api/ig-profile?username=${encodeURIComponent(creator.handle)}&limit=20${fresh ? "&fresh=1" : ""}`);
       const data = await res.json().catch(() => ({ error: "Couldn't load reels right now. Please try again." }));
       if (data.error) throw new Error(data.error);
-      setProfileReels(prev => ({ ...prev, [creator.id]: { reels: data.reels || [], loading: false } }));
+      setProfileReels(prev => ({ ...prev, [creator.id]: { reels: data.reels || [], loading: false, savedAt: data.savedAt, fromCache: data.fromCache } }));
     } catch (e: unknown) {
       setProfileReels(prev => ({ ...prev, [creator.id]: { reels: [], loading: false, error: e instanceof Error ? e.message : "Couldn't load reels." } }));
     }
@@ -787,6 +797,11 @@ function InstagramTab() {
                     <div className="flex items-center justify-between px-5 py-2 border-b border-white/[0.04]">
                       <p className="text-[10px] text-muted-foreground font-medium">
                         Top {reelState.reels.length} recent Reels • Sorted by Views
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {reelState.fromCache && reelState.savedAt
+                          ? `Saved copy from ${dataAge(reelState.savedAt)} (free). Click Refresh for today's numbers.`
+                          : "Live data, just fetched."}
                       </p>
                     </div>
 
