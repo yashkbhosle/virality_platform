@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { FileText, Loader2, Copy, Check, Download, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,8 +11,19 @@ const DURATIONS = ["30", "45", "60", "90", "120"];
 const FORMATS = ["Educational/Value", "Story", "List/Tips", "Tutorial", "Case Study", "Q&A", "Controversial", "Transformation"];
 
 export default function ScriptWriterPage() {
+  // useSearchParams needs a Suspense boundary on statically rendered pages.
+  return (
+    <Suspense>
+      <ScriptWriter />
+    </Suspense>
+  );
+}
+
+function ScriptWriter() {
+  // Hook Library and analysis cards link here with ?hook=…&topic=…
+  const params = useSearchParams();
   const [form, setForm] = useState({
-    topic: "", niche: "Healthcare", hook: "", duration: "60",
+    topic: params.get("topic") ?? "", niche: "Healthcare", hook: params.get("hook") ?? "", duration: "60",
     format: "Educational/Value", audience: "", cta: "Follow for more",
   });
   const [loading, setLoading] = useState(false);

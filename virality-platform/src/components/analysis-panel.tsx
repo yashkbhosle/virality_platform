@@ -1,16 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import {
   AlertTriangle, BookmarkPlus, Check, CheckCircle, Clapperboard, Copy, Download,
-  Loader2, MessageCircle, Repeat, Sparkles, Target, UserRound,
+  Loader2, MessageCircle, Repeat, Sparkles, Target,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import type { FrameworkScore, HookFormula, ViralAnalysis, VisualPlaybook } from "@/lib/analysis-prompt";
 import { getHookStructure, splitTemplate } from "@/lib/hook-library";
 import { usePersonas } from "@/lib/use-personas";
+import { HookFillPanel } from "@/components/hook-fill-panel";
 
 export interface TranscriptData {
   transcript: string;
@@ -66,17 +65,10 @@ export function TemplateText({ template }: { template: string }) {
   );
 }
 
-type FilledHook = { text: string; note: string };
-
 function HookFormulaCard({ formula, source }: { formula: HookFormula; source?: AnalysisSource }) {
-  const { active, activeId, personas } = usePersonas();
+  const { activeId } = usePersonas();
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "duplicate" | "error">("idle");
   const [fillOpen, setFillOpen] = useState(false);
-  const [topic, setTopic] = useState("");
-  const [filling, setFilling] = useState(false);
-  const [fillError, setFillError] = useState("");
-  const [hooks, setHooks] = useState<FilledHook[]>([]);
-  const [copied, setCopied] = useState<number | null>(null);
   const known = getHookStructure(formula.libraryId);
 
   const save = () => {
@@ -98,30 +90,6 @@ function HookFormulaCard({ formula, source }: { formula: HookFormula; source?: A
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d) => setSaveState(d.duplicate ? "duplicate" : "saved"))
       .catch(() => setSaveState("error"));
-  };
-
-  const fill = () => {
-    if (!active) return;
-    setFilling(true);
-    setFillError("");
-    fetch("/api/hooks/fill", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ template: formula.template, variables: formula.variables, personaId: active.id, topic }),
-    })
-      .then(async (r) => {
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d.error || "Couldn't write hooks right now. Please try again.");
-        setHooks(d.hooks ?? []);
-      })
-      .catch((e: unknown) => setFillError(e instanceof Error ? e.message : "Couldn't write hooks right now. Please try again."))
-      .finally(() => setFilling(false));
-  };
-
-  const copyHook = (i: number, text: string) => {
-    copyText(text);
-    setCopied(i);
-    setTimeout(() => setCopied((c) => (c === i ? null : c)), 1500);
   };
 
   return (
@@ -170,54 +138,8 @@ function HookFormulaCard({ formula, source }: { formula: HookFormula; source?: A
       {saveState === "error" && <p className="text-xs text-red-600 dark:text-red-300">Couldn&apos;t save this hook. Please try again.</p>}
 
       {fillOpen && (
-        <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3 space-y-3">
-          {personas === null ? (
-            <p className="text-xs text-muted-foreground flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" /> Loading personas…</p>
-          ) : !active ? (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <UserRound className="h-3.5 w-3.5 text-muted-foreground" />
-              <span>Hooks are written in your persona&apos;s voice. {personas.length ? "Pick a persona in the sidebar first." : "Create a persona first."}</span>
-              <Link href="/persona" className="font-semibold text-orange-600 dark:text-orange-300 hover:underline">
-                {personas.length ? "Manage personas" : "Create persona"} →
-              </Link>
-            </div>
-          ) : (
-            <>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <Input
-                  value={topic} onChange={(e) => setTopic(e.target.value)}
-                  placeholder="Topic for this video (optional)" className="h-8 text-xs"
-                  onKeyDown={(e) => e.key === "Enter" && !filling && fill()}
-                />
-                <Button size="sm" className="h-8 text-xs rounded-full shrink-0" onClick={fill} disabled={filling}>
-                  {filling ? <><Loader2 className="h-3 w-3 animate-spin mr-1" /> Writing…</> : hooks.length ? "Write 5 more" : `Write 5 hooks as ${active.name}`}
-                </Button>
-              </div>
-              {fillError && (
-                <p className="text-xs text-red-600 dark:text-red-300">
-                  {fillError} <button className="underline" onClick={fill}>Retry</button>
-                </p>
-              )}
-              {hooks.length > 0 && (
-                <ul className="space-y-2">
-                  {hooks.map((h, i) => (
-                    <li key={i} className="flex items-start gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium leading-snug">{h.text}</p>
-                        {h.note && <p className="text-[11px] text-muted-foreground mt-0.5">{h.note}</p>}
-                      </div>
-                      <button
-                        onClick={() => copyHook(i, h.text)} title="Copy hook"
-                        className="shrink-0 h-7 w-7 rounded-lg flex items-center justify-center hover:bg-white/[0.08] text-muted-foreground"
-                      >
-                        {copied === i ? <Check className="h-3.5 w-3.5 text-green-600 dark:text-green-300" /> : <Copy className="h-3.5 w-3.5" />}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
+        <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3">
+          <HookFillPanel template={formula.template} variables={formula.variables} showSendToScript />
         </div>
       )}
     </div>

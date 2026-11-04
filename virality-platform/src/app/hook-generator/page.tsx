@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Zap, Loader2, Copy, Check, RefreshCw, ChevronRight } from "lucide-react";
+import Link from "next/link";
+import { Zap, Loader2, Copy, Check, RefreshCw, UserRound } from "lucide-react";
+import { usePersonas } from "@/lib/use-personas";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -22,24 +24,37 @@ const TYPE_COLORS: Record<string, string> = {
   "Social Proof": "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
 };
 
+interface GeneratedHook {
+  text: string;
+  type: string;
+  why: string;
+  structureId?: string;
+}
+
 export default function HookGeneratorPage() {
+  const { active, personas } = usePersonas();
+  const [error, setError] = useState("");
   const [form, setForm] = useState({ topic: "", niche: "Healthcare/Medical", style: "engaging", reference: "" });
   const [loading, setLoading] = useState(false);
-  const [hooks, setHooks] = useState<any[]>([]);
+  const [hooks, setHooks] = useState<GeneratedHook[]>([]);
   const [copied, setCopied] = useState<string | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
 
   const generate = async () => {
     setLoading(true);
     setHooks([]);
+    setError("");
     try {
       const res = await fetch("/api/hooks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, personaId: active?.id }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error);
       setHooks(data.hooks || []);
+    } catch (e: unknown) {
+      setError((e instanceof Error && e.message) || "Couldn't generate hooks right now. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -67,6 +82,23 @@ export default function HookGeneratorPage() {
         <p className="mt-1 text-sm text-muted-foreground">Generate 15 viral hooks in seconds using proven frameworks</p>
       </div>
 
+      {personas !== null && (
+        active ? (
+          <div className="glass rounded-2xl px-4 py-3 text-sm flex flex-wrap items-center gap-2 border border-orange-500/20">
+            <UserRound className="h-4 w-4 text-orange-600 dark:text-orange-300" />
+            <span>Writing as <b>{active.name}</b>: 3 hooks from each of the 5 library structures that fit this persona.</span>
+          </div>
+        ) : (
+          <div className="glass rounded-2xl px-4 py-3 text-sm flex flex-wrap items-center gap-2">
+            <UserRound className="h-4 w-4 text-muted-foreground" />
+            <span className="text-muted-foreground">No persona selected, so hooks will be generic.</span>
+            <Link href="/persona" className="font-semibold text-orange-600 dark:text-orange-300 hover:underline">
+              {personas.length ? "Pick a persona" : "Create a persona"} →
+            </Link>
+          </div>
+        )
+      )}
+
 
       {/* Form */}
       <div className="glass rounded-2xl p-6 space-y-5">
@@ -77,13 +109,13 @@ export default function HookGeneratorPage() {
               placeholder="e.g. Why most IVF cycles fail, Cirrhosis reversal..."
               className="rounded-xl glass border-white/[0.08] h-11 text-sm" />
           </div>
-          <div>
+          {!active && <div>
             <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Niche</label>
             <select value={form.niche} onChange={(e) => setForm({ ...form, niche: e.target.value })}
               className="w-full h-11 rounded-xl bg-white/[0.03] border border-white/[0.08] px-3 text-sm text-foreground">
               {NICHES.map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
-          </div>
+          </div>}
           <div>
             <label className="text-xs text-muted-foreground mb-1.5 block font-medium">Hook Style</label>
             <div className="flex flex-wrap gap-2">
@@ -107,6 +139,13 @@ export default function HookGeneratorPage() {
           {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> Generating 15 hooks...</> : <><Zap className="h-4 w-4" /> Generate Hooks</>}
         </Button>
       </div>
+
+      {error && (
+        <div className="glass rounded-2xl p-4 border border-red-500/20 text-sm text-red-600 dark:text-red-300 flex items-center justify-between gap-3">
+          <span>{error}</span>
+          <Button size="sm" variant="outline" className="rounded-full h-8 text-xs" onClick={generate}>Try again</Button>
+        </div>
+      )}
 
       {/* Selected hooks export */}
       {selected.length > 0 && (
