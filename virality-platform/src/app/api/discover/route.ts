@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await runDiscovery(description, sortedPlatforms);
+    const result = await runDiscovery(description, sortedPlatforms, { fresh: refresh });
     const createdAt = new Date().toISOString();
     await store
       .upsert<CacheDoc>(CACHE_COLLECTION, { id: cacheId, createdAt, input: { description, platforms: sortedPlatforms }, result })

@@ -80,10 +80,30 @@ The **Refresh now** button on My Channel takes a snapshot on demand. Trends and 
 
 Instagram lookups through Apify can take one to two minutes, so these routes set `maxDuration = 300`. Check that your Vercel plan allows that function duration.
 
+## Apify cache
+
+Instagram data comes from Apify, which charges per result. To avoid paying twice for the same lookup, every Apify call except My Channel goes through `src/lib/apify-cache.ts`. Results are stored in the `apify_cache` collection (Supabase in production, `../data/apify_cache.json` locally).
+
+| Call | Max results | Cached for |
+|---|---|---|
+| Keyword Research, Instagram (`/api/instagram`) | 100 | 24 hours |
+| Discover hashtag search | 60 per run | 24 hours |
+| Creator reels on the Watchlist (`/api/ig-profile`) | 200 | 12 hours |
+| Profile lookups (Discover, add creator) | 1 per profile | 12 hours |
+| Creator stats, last 30 days (`scrapeCreatorStats`) | 60, newer than 30 days | 12 hours |
+| Pipeline reels (`scrapeReels`) | 3 × max videos (60 to 150), newer than *n* days | 12 hours |
+| Reel transcript (`/api/ig-analyze`) | 1 | 30 days |
+| My Channel snapshots | 1 profile + 20 reels | not cached (always live) |
+
+- The cache key is the actor name plus a hash of its exact input, so a different hashtag, username or limit is a different entry.
+- Empty or error-only results (Apify outages, missing profiles) are never cached.
+- **Force a refresh:** the Watchlist **Refresh** button and Discover's **Refresh** fetch live data. In the API, add `?fresh=1` (GET) or `{ "fresh": true }` (POST body), e.g. `/api/ig-profile?username=x&fresh=1`.
+- The server log shows `[apify-cache] HIT`, `MISS` or `FRESH` with the key for each call.
+
 ## Cost and quota notes
 
 - **YouTube Data API:** 10,000 units/day by default; `search` costs 100 units. A discovery run uses roughly 1,200+ units, so results are cached for 24h. My Channel uses the uploads playlist (about 3 units per snapshot).
-- **Apify:** Instagram discovery is capped at about 25 profile lookups per run. Each My Channel Instagram snapshot is two actor runs.
+- **Apify:** Instagram discovery is capped at about 25 profile lookups per run. Each My Channel Instagram snapshot is two actor runs. Other Instagram calls are cached (see **Apify cache**). If the monthly Apify limit is used up, the Watchlist says so; raise it at console.apify.com → Billing.
 - **Gemini:** relevance scoring is batched into one call. Requests retry on overload (429/5xx) and then fall back to `GEMINI_FALLBACK_MODEL`.
 
 ## Project layout
