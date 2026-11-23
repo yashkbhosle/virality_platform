@@ -66,6 +66,8 @@ export interface TrackedCreator {
   tier: SizeTier | null;
   personaId?: string;
   thumbnail?: string;
+  /** When the profile picture was saved in the database (see /api/avatar). */
+  avatarSavedAt?: string;
   url?: string;
   addedAt: string;
 }

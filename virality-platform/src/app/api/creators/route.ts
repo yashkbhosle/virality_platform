@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 import { deleteCreator, getCreator, listCreators, saveCreator } from "@/lib/pipeline-data";
 import { scrapeCreatorStats } from "@/lib/apify";
+import { saveAvatarFromUrl } from "@/lib/avatar-store";
 import type { Creator } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -68,6 +69,7 @@ export async function POST(request: Request) {
         lastScrapedAt: new Date().toISOString(),
       };
       await saveCreator(creator);
+      await saveAvatarFromUrl(`instagram:${username}`, stats.profilePicUrl);
     } catch (err) {
       console.error(`[creators] stats lookup failed for @${username}`, err);
     }

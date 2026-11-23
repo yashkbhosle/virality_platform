@@ -1,6 +1,7 @@
 import { APIFY_CACHE_TTL, wantsFresh } from "@/lib/apify-cache";
 import { getCreator, listCreators, saveCreator } from "@/lib/pipeline-data";
 import { scrapeCreatorStats } from "@/lib/apify";
+import { saveAvatarFromUrl } from "@/lib/avatar-store";
 
 export const maxDuration = 300;
 
@@ -32,6 +33,7 @@ export async function POST(request: Request) {
           );
 
           const stats = await scrapeCreatorStats(creator.username, { fresh });
+          await saveAvatarFromUrl(`instagram:${creator.username.toLowerCase()}`, stats.profilePicUrl);
           const current = await getCreator(creator.id);
           if (current) {
             await saveCreator({

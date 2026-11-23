@@ -89,6 +89,12 @@ The Creators, Configs, Videos and Run Pipeline pages keep their data in the stor
 - **Run Pipeline skips reels a config already analyzed** (matched by reel shortcode), so re-running costs nothing for them and adds no duplicates. Their saved rows get the latest view, like and comment counts. To analyze a reel again, delete its row from the store first.
 - Each video is saved as soon as it is analyzed, so a run cut off by Vercel's 5-minute limit keeps what it finished. Running it again picks up the rest.
 
+## Profile pictures
+
+Instagram picture links expire after a few days, so the picture itself is saved in the store (collection `creator_avatars`, via `src/lib/avatar-store.ts`) when a creator is added to the Watchlist or the Creators page, and when Creators page stats are refreshed. Pages load it from `/api/avatar?id=instagram:<handle>`, falling back to the original link and then the creator's initial. Only JPEG, PNG, WebP and GIF from Instagram/YouTube image hosts are saved, up to 400 KB.
+
+To save pictures for creators added before this existed, run `npm run backfill:avatars` from `virality-platform/` (one Apify profile lookup per creator without a saved picture).
+
 ## Apify cache
 
 Instagram data comes from Apify, which charges per result. To avoid paying twice for the same lookup, every Apify call except My Channel goes through `src/lib/apify-cache.ts`. Results are stored in the `apify_cache` collection (Supabase in production, `../data/apify_cache.json` locally).
