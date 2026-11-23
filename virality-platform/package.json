@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "migrate:pipeline": "npx tsx scripts/migrate-pipeline.ts"
+    "migrate:pipeline": "npx tsx scripts/migrate-pipeline.ts",
+    "backfill:avatars": "npx tsx scripts/backfill-avatars.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

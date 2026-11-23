@@ -17,6 +17,7 @@ import { SavedAnalysisNote } from "@/components/analysis-panel";
 import { formatCount, tierLabel, type SizeTier, type TrackedCreator } from "@/lib/creators-shared";
 import { listTracked, migrateLegacyWatchlist, setCreatorPersona, trackCreator, untrackCreator } from "@/lib/tracked-creators-client";
 import { PersonaTagSelect } from "@/components/persona-tag-select";
+import { CreatorAvatar } from "@/components/creator-avatar";
 import { usePersonas } from "@/lib/use-personas";
 
 function fmt(n: number) {
@@ -29,12 +30,13 @@ function fmt(n: number) {
 interface WatchlistEntry {
   id: string; handle: string; label: string;
   platform: "youtube" | "instagram"; addedAt: string;
-  followers?: number; tier?: SizeTier | null; personaId?: string; thumbnail?: string; url?: string;
+  followers?: number; tier?: SizeTier | null; personaId?: string; thumbnail?: string; url?: string; avatarSavedAt?: string;
 }
 function toWatchlistEntry(c: TrackedCreator): WatchlistEntry {
   return {
     id: c.id, handle: c.handle, label: c.name, platform: c.platform, addedAt: c.addedAt,
     followers: c.followers, tier: c.tier, personaId: c.personaId, thumbnail: c.thumbnail, url: c.url,
+    avatarSavedAt: c.avatarSavedAt,
   };
 }
 interface ChannelStats {
@@ -455,8 +457,8 @@ function YoutubeTab() {
                       className={`h-5 w-5 rounded-md border-2 shrink-0 transition-all ${isSelected ? "bg-purple-500 border-purple-500" : "border-white/[0.2]"}`}
                     />
                     {entry.thumbnail ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={entry.thumbnail} alt="" className="h-10 w-10 rounded-xl object-cover shrink-0" />
+                      <CreatorAvatar id={entry.id} version={entry.avatarSavedAt} originalSrc={entry.thumbnail} className="h-10 w-10 rounded-xl object-cover shrink-0"
+                        fallback={<div className="h-10 w-10 rounded-xl bg-gradient-to-br from-red-500/20 to-orange-500/20 flex items-center justify-center shrink-0"><Youtube className="h-5 w-5 text-red-400" /></div>} />
                     ) : (
                       <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-red-500/20 to-orange-500/20 flex items-center justify-center shrink-0">
                         <Youtube className="h-5 w-5 text-red-400" />
@@ -768,11 +770,14 @@ function InstagramTab() {
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
                     <div className="h-11 w-11 shrink-0 rounded-full overflow-hidden bg-gradient-to-br from-pink-500/20 to-purple-500/20 border border-white/[0.1]">
-                      {creator.thumbnail
-                        // eslint-disable-next-line @next/next/no-img-element
-                        ? <img src={`/api/proxy-image?url=${encodeURIComponent(creator.thumbnail)}`} alt={`@${creator.handle}`} className="h-full w-full object-cover" />
-                        : <div className="flex h-full w-full items-center justify-center text-base font-bold text-muted-foreground/50">{creator.handle.charAt(0).toUpperCase()}</div>
-                      }
+                      <CreatorAvatar
+                        id={creator.id}
+                        version={creator.avatarSavedAt}
+                        originalSrc={creator.thumbnail ? `/api/proxy-image?url=${encodeURIComponent(creator.thumbnail)}` : undefined}
+                        alt={`@${creator.handle}`}
+                        className="h-full w-full object-cover"
+                        fallback={<div className="flex h-full w-full items-center justify-center text-base font-bold text-muted-foreground/50">{creator.handle.charAt(0).toUpperCase()}</div>}
+                      />
                     </div>
                     <div className="flex-1 min-w-0">
                       <a href={`https://www.instagram.com/${creator.handle}/`} target="_blank" rel="noopener noreferrer"

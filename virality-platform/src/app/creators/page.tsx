@@ -22,6 +22,7 @@ import {
 import { Plus, Pencil, Trash2, Users, Eye, Film, UserCheck, RefreshCw, Loader2, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import type { Creator } from "@/lib/types";
+import { CreatorAvatar } from "@/components/creator-avatar";
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
@@ -273,18 +274,18 @@ export default function CreatorsPage() {
                 >
                   {/* Profile pic */}
                   <div className="relative h-12 w-12 shrink-0 rounded-full overflow-hidden bg-gradient-to-br from-pink-500/20 to-purple-500/20 border border-white/[0.1]">
-                    {creator.profilePicUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={`/api/proxy-image?url=${encodeURIComponent(creator.profilePicUrl)}`}
-                        alt={`@${creator.username}`}
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-lg font-bold text-muted-foreground/50">
-                        {creator.username.charAt(0).toUpperCase()}
-                      </div>
-                    )}
+                    <CreatorAvatar
+                      id={`instagram:${creator.username}`}
+                      version={creator.lastScrapedAt}
+                      originalSrc={creator.profilePicUrl ? `/api/proxy-image?url=${encodeURIComponent(creator.profilePicUrl)}` : undefined}
+                      alt={`@${creator.username}`}
+                      className="h-full w-full object-cover"
+                      fallback={
+                        <div className="flex h-full w-full items-center justify-center text-lg font-bold text-muted-foreground/50">
+                          {creator.username.charAt(0).toUpperCase()}
+                        </div>
+                      }
+                    />
                   </div>
                   <div>
                     <p className="text-sm font-semibold hover:text-purple-400 transition-colors">@{creator.username}</p>

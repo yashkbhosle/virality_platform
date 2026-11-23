@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStore } from "@/lib/store";
+import { saveAvatarFromUrl } from "@/lib/avatar-store";
 import { creatorKey, tierFor, type CreatorPlatform, type TrackedCreator } from "@/lib/creators-shared";
 
 export const dynamic = "force-dynamic";
@@ -73,6 +74,9 @@ export async function POST(req: NextRequest) {
         name: d.name !== d.handle ? d.name : existing?.name ?? d.name,
         addedAt: existing?.addedAt ?? new Date().toISOString(),
       };
+      // Keep a copy of the profile picture: Instagram's picture links expire after a few days.
+      const avatarAt = await saveAvatarFromUrl(merged.id, merged.thumbnail);
+      if (avatarAt) merged.avatarSavedAt = avatarAt;
       saved.push(await store.upsert(COLLECTION, merged));
     }
     return NextResponse.json(Array.isArray(body?.creators) ? { creators: saved } : { creator: saved[0] }, { status: 201 });
