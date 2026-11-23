@@ -26,6 +26,18 @@ export async function trackCreator(input: Partial<TrackedCreator> & { platform: 
   return data.creator;
 }
 
+/** Change (or clear, with null) the persona a tracked creator belongs to. */
+export async function setCreatorPersona(id: string, personaId: string | null): Promise<TrackedCreator> {
+  const res = await fetch("/api/tracked-creators", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, personaId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.creator) throw new Error(data.error || "Couldn't change the persona.");
+  return data.creator;
+}
+
 export async function untrackCreator(id: string): Promise<void> {
   const res = await fetch(`/api/tracked-creators?id=${encodeURIComponent(id)}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Couldn't remove this creator.");

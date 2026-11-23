@@ -82,6 +82,29 @@ export async function POST(req: NextRequest) {
   }
 }
 
+// Body: { id, personaId } — change which persona a creator is tracked for (null/"" clears it).
+export async function PATCH(req: NextRequest) {
+  const body = await req.json().catch(() => null);
+  const id = str(body?.id, 200);
+  if (!id) return NextResponse.json({ error: "Missing id." }, { status: 400 });
+  if (body?.personaId !== null && body?.personaId !== undefined && typeof body.personaId !== "string") {
+    return NextResponse.json({ error: "personaId must be a string or null." }, { status: 400 });
+  }
+  const personaId = str(body?.personaId, 64) || undefined;
+  try {
+    const store = getStore();
+    const existing = await store.get<TrackedCreator>(COLLECTION, id);
+    if (!existing) return NextResponse.json({ error: "That creator isn't tracked anymore." }, { status: 404 });
+    const { personaId: _old, ...rest } = existing;
+    void _old;
+    const updated: TrackedCreator = personaId ? { ...rest, personaId } : rest;
+    return NextResponse.json({ creator: await store.upsert(COLLECTION, updated) });
+  } catch (err) {
+    console.error("[tracked-creators] persona change failed", err);
+    return NextResponse.json({ error: "Couldn't change the persona. Please try again." }, { status: 500 });
+  }
+}
+
 export async function DELETE(req: NextRequest) {
   const id = new URL(req.url).searchParams.get("id");
   if (!id) return NextResponse.json({ error: "Missing id." }, { status: 400 });
