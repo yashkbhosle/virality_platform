@@ -15,7 +15,8 @@ import { Label } from "@/components/ui/label";
 import Link from "next/link";
 import { SavedAnalysisNote } from "@/components/analysis-panel";
 import { formatCount, tierLabel, type SizeTier, type TrackedCreator } from "@/lib/creators-shared";
-import { listTracked, migrateLegacyWatchlist, trackCreator, untrackCreator } from "@/lib/tracked-creators-client";
+import { listTracked, migrateLegacyWatchlist, setCreatorPersona, trackCreator, untrackCreator } from "@/lib/tracked-creators-client";
+import { PersonaTagSelect } from "@/components/persona-tag-select";
 import { usePersonas } from "@/lib/use-personas";
 
 function fmt(n: number) {
@@ -181,7 +182,11 @@ function YoutubeTab() {
   const [filterTopN, setFilterTopN] = useState(20);
 
   const [listError, setListError] = useState<string | null>(null);
-  const { names: personaNames, activeId: activePersonaId } = usePersonas();
+  const { personas, activeId: activePersonaId } = usePersonas();
+  const changePersona = async (id: string, personaId: string | null) => {
+    const saved = await setCreatorPersona(id, personaId);
+    setEntries(prev => prev.map(e => (e.id === id ? toWatchlistEntry(saved) : e)));
+  };
 
   // Tracked creators live in /api/tracked-creators (persisted store).
   // Old localStorage entries are imported once by migrateLegacyWatchlist().
@@ -463,9 +468,9 @@ function YoutubeTab() {
                         {[
                           !entry.handle.startsWith("UC") && entry.label !== entry.handle ? entry.label : null,
                           entry.followers ? `${formatCount(entry.followers)} subs · ${tierLabel(entry.tier)}` : null,
-                          entry.personaId && personaNames[entry.personaId] ? `for ${personaNames[entry.personaId]}` : null,
                         ].filter(Boolean).join(" · ")}
                       </p>
+                      <PersonaTagSelect value={entry.personaId} personas={personas} onChange={(pid) => changePersona(entry.id, pid)} />
                     </div>
                   </div>
                   <div className="flex gap-2 flex-wrap">
@@ -582,7 +587,11 @@ function InstagramTab() {
   const [username, setUsername] = useState("");
   const [saving, setSaving] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
-  const { names, activeId } = usePersonas();
+  const { personas, activeId, names } = usePersonas();
+  const changePersona = async (id: string, personaId: string | null) => {
+    const saved = await setCreatorPersona(id, personaId);
+    setCreators(prev => (prev ? prev.map(c => (c.id === id ? saved : c)) : prev));
+  };
 
   const [profileReels, setProfileReels] = useState<Record<string, { reels: IgReel[]; loading: boolean; error?: string; savedAt?: string; fromCache?: boolean }>>({});
   const [igAnalysis, setIgAnalysis] = useState<Record<string, TranscriptData>>({});
@@ -772,8 +781,8 @@ function InstagramTab() {
                       </a>
                       <p className="text-[11px] text-muted-foreground truncate mt-0.5">
                         {creator.followers ? `${formatCount(creator.followers)} followers · ${tierLabel(creator.tier)}` : creator.name}
-                        {creator.personaId && names[creator.personaId] && ` · for ${names[creator.personaId]}`}
                       </p>
+                      <PersonaTagSelect value={creator.personaId} personas={personas} onChange={(pid) => changePersona(creator.id, pid)} />
                     </div>
                   </div>
                   <div className="flex gap-2 flex-wrap">
